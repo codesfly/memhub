@@ -1,9 +1,9 @@
 """FastMCP server: MCP tools + REST custom routes + startup entry."""
 from pathlib import Path
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, HTMLResponse
 from fastmcp import FastMCP
-from . import db as db_mod, store, search, config, queue, transcript
+from . import db as db_mod, store, search, config, queue, transcript, ui
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
     mcp = FastMCP("memhub")
@@ -99,6 +99,35 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             snippet = r["content"].replace("\n", " ")[:160]
             lines.append(f"- [{r['kind']}] {snippet}")
         return JSONResponse({"context": "\n".join(lines)})
+
+    @mcp.custom_route("/memories", methods=["GET"])
+    async def list_memories_route(request: Request) -> JSONResponse:
+        q = request.query_params
+        try:
+            limit = int(q.get("limit", 50)); offset = int(q.get("offset", 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "limit/offset must be integers"}, status_code=400)
+        conn = db_mod.connect(db_path)
+        try:
+            items = store.list_memories(conn, project=q.get("project"),
+                                        kind=q.get("kind"), limit=limit, offset=offset)
+        finally:
+            conn.close()
+        return JSONResponse({"memories": items})
+
+    @mcp.custom_route("/memories/{mid:int}", methods=["DELETE"])
+    async def delete_memory_route(request: Request) -> JSONResponse:
+        mid = request.path_params["mid"]
+        conn = db_mod.connect(db_path)
+        try:
+            ok = store.delete_memory(conn, mid)
+        finally:
+            conn.close()
+        return JSONResponse({"deleted": ok}, status_code=200 if ok else 404)
+
+    @mcp.custom_route("/ui", methods=["GET"])
+    async def ui_route(request: Request) -> HTMLResponse:
+        return HTMLResponse(ui.PAGE)
 
     return mcp
 

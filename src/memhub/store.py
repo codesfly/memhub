@@ -48,3 +48,29 @@ def store_memory(
     conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
     conn.commit()
     return mid
+
+
+def list_memories(conn, project=None, kind=None, limit=50, offset=0):
+    # Management view: intentionally unscoped (lists across ALL projects),
+    # unlike search.py's fail-closed scope model. Local single-user tool.
+    limit = max(1, min(int(limit), 500))   # clamp: avoid ?limit=-1 dumping the table
+    offset = max(0, int(offset))
+    conds, params = [], []
+    if project:
+        conds.append("project = ?"); params.append(project)
+    if kind:
+        conds.append("kind = ?"); params.append(kind)
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    sql = (f"SELECT id, content, kind, project, agent, scope, created_at "
+           f"FROM memories{where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?")
+    rows = conn.execute(sql, params + [limit, offset]).fetchall()
+    return [{"id": r[0], "content": r[1], "kind": r[2], "project": r[3],
+             "agent": r[4], "scope": r[5], "created_at": r[6]} for r in rows]
+
+
+def delete_memory(conn, mid) -> bool:
+    cur = conn.execute("DELETE FROM memories WHERE id=?", (mid,))
+    conn.execute("DELETE FROM memories_vec WHERE memory_id=?", (mid,))
+    conn.execute("DELETE FROM memories_fts WHERE rowid=?", (mid,))
+    conn.commit()
+    return cur.rowcount > 0
