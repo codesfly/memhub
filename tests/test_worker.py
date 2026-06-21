@@ -61,3 +61,16 @@ def test_run_loop_survives_bad_tick(tmp_path, monkeypatch):
     primary = StubCapturer(items=[{"content": "c", "kind": "fact", "tags": [], "scope": "current"}])
     worker.run_loop(db_path, primary, StubCapturer(), interval=0, stop=stop)  # interval=0 -> no real sleep
     assert ticks["n"] > 3  # loop survived multiple ticks despite store throwing
+
+
+def test_process_pending_skips_empty_transcript(conn):
+    queue.enqueue(conn, {"transcript": "   ", "project": "p", "agent": "x"})
+    called = {"n": 0}
+    class Spy:
+        def capture(self, t, m):
+            called["n"] += 1
+            return []
+    n = worker.process_pending(conn, primary=Spy(), fallback=Spy())
+    assert called["n"] == 0  # capturer NOT called for empty transcript
+    assert conn.execute("SELECT status FROM capture_queue").fetchone()[0] == "done"
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 0

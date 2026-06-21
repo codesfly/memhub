@@ -56,3 +56,14 @@ def test_llm_capturer_raises_on_timeout():
             assert False, "expected error"
         except Exception:
             pass
+
+
+def test_llm_capturer_rejects_empty_without_shelling_out():
+    with patch("memhub.capture.subprocess.run") as run:
+        raised = False
+        try:
+            LLMCapturer().capture("   ", {})
+        except Exception:
+            raised = True
+        assert raised
+        run.assert_not_called()  # never invoke claude for empty input

@@ -63,6 +63,8 @@ class LLMCapturer:
         self.model_cmd = model_cmd
 
     def capture(self, transcript: str, meta: dict) -> list[dict]:
+        if not transcript.strip():
+            raise CaptureError("empty transcript")
         proc = subprocess.run(
             [self.model_cmd, "-p", _EXTRACT_PROMPT],
             input=transcript, text=True, capture_output=True, timeout=self.timeout,

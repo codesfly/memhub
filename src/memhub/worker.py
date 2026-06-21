@@ -15,6 +15,11 @@ def process_pending(conn: sqlite3.Connection, primary, fallback, limit: int = 10
         try:
             payload = json.loads(payload_json)
             transcript = payload.get("transcript", "")
+            if not transcript.strip():
+                # empty session (e.g. a short home-dir session) — nothing to capture, don't shell out to claude
+                queue.mark_done(conn, qid)
+                done += 1
+                continue
             meta = {"project": payload.get("project"), "agent": payload.get("agent"),
                     "session_id": payload.get("session_id")}
             items = _capture_with_fallback(transcript, meta, primary, fallback)
