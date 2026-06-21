@@ -3,7 +3,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from fastmcp import FastMCP
-from . import db as db_mod, store, search, config, queue
+from . import db as db_mod, store, search, config, queue, transcript
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
     mcp = FastMCP("memhub")
@@ -41,10 +41,14 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             body = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        text = body.get("transcript", "")
+        tp = body.get("transcript_path")
+        if tp:
+            text = transcript.parse_transcript(tp)
         conn = db_mod.connect(db_path)
         try:
             qid = queue.enqueue(conn, {
-                "transcript": body.get("transcript", ""),
+                "transcript": text,
                 "project": body.get("project"),
                 "agent": body.get("agent"),
                 "session_id": body.get("session_id"),
@@ -73,6 +77,28 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
         finally:
             conn.close()
         return JSONResponse({"results": results})
+
+    @mcp.custom_route("/inject", methods=["POST"])
+    async def inject(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"context": ""}, status_code=200)
+        conn = db_mod.connect(db_path)
+        try:
+            results = search.search(conn, query="", project=body.get("project"),
+                                    scope="current,global", limit=6)
+        except Exception:
+            return JSONResponse({"context": ""}, status_code=200)
+        finally:
+            conn.close()
+        if not results:
+            return JSONResponse({"context": ""})
+        lines = [f"## 相关记忆 (memhub · {len(results)} 条)"]
+        for r in results:
+            snippet = r["content"].replace("\n", " ")[:160]
+            lines.append(f"- [{r['kind']}] {snippet}")
+        return JSONResponse({"context": "\n".join(lines)})
 
     return mcp
 

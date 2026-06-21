@@ -49,3 +49,10 @@ def test_fts_syntax_chars_dont_crash(conn):
     _seed(conn)
     results = search.search(conn, query='broken" AND (', project="p1", scope="all")
     assert isinstance(results, list)
+
+def test_recent_fallback_respects_limit_and_marks_score_zero(conn):
+    for i in range(3):
+        store.store_memory(conn, f"mem number {i}", project="pr", agent="x", scope="current")
+    results = search.search(conn, query="   ", project="pr", scope="current", limit=2)
+    assert len(results) == 2                      # _recent respects limit
+    assert all(r["score"] == 0.0 for r in results)  # _recent marks score 0.0

@@ -45,6 +45,8 @@ def _fts_ids(conn, query, k):
 
 
 def search(conn, query, project=None, scope="current,global", kind=None, limit=config.DEFAULT_LIMIT):
+    if not query.strip():
+        return _recent(conn, project, scope, kind, limit)
     pool = max(limit * 4, 20)
     vec_ids = _vector_ids(conn, query, pool)
     fts_ids = _fts_ids(conn, query, pool)
@@ -74,3 +76,16 @@ def search(conn, query, project=None, scope="current,global", kind=None, limit=c
     ]
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:limit]
+
+
+def _recent(conn, project, scope, kind, limit):
+    clause, params = _scope_clause(project, scope)
+    sql = f"SELECT id, content, kind, project, agent, scope, created_at FROM memories WHERE {clause}"
+    if kind:
+        sql += " AND kind = ?"
+        params = params + [kind]
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params = params + [limit]
+    rows = conn.execute(sql, params).fetchall()
+    return [{"id": r[0], "content": r[1], "kind": r[2], "project": r[3],
+             "agent": r[4], "scope": r[5], "created_at": r[6], "score": 0.0} for r in rows]
