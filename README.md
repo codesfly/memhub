@@ -1,5 +1,7 @@
 # memhub
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 > Local-first shared memory hub for CLI AI agents — automatic capture, automatic injection, hybrid retrieval. No cloud, no extra API keys.
 
 memhub gives your CLI coding agents a shared, persistent memory. When a session ends it automatically extracts durable memories from the transcript; when a session starts it injects the relevant ones back into context. Everything runs locally on SQLite + local embeddings. Claude Code is wired up today; Codex / Gemini CLI are designed for but not yet shipped.
