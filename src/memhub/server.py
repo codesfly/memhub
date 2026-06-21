@@ -3,7 +3,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from fastmcp import FastMCP
-from . import db as db_mod, store, search, config
+from . import db as db_mod, store, search, config, queue
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
     mcp = FastMCP("memhub")
@@ -41,19 +41,19 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             body = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        transcript = body.get("transcript", "")
         conn = db_mod.connect(db_path)
         try:
-            mid = store.store_memory(
-                conn, content=transcript, project=body.get("project"),
-                agent=body.get("agent"), kind="raw", scope="current",
-                session_id=body.get("session_id"),
-            )
+            qid = queue.enqueue(conn, {
+                "transcript": body.get("transcript", ""),
+                "project": body.get("project"),
+                "agent": body.get("agent"),
+                "session_id": body.get("session_id"),
+            })
         except Exception as e:
-            return JSONResponse({"stored": [], "error": str(e)}, status_code=200)
+            return JSONResponse({"queued": None, "error": str(e)}, status_code=200)
         finally:
             conn.close()
-        return JSONResponse({"stored": [] if mid is None else [mid]})
+        return JSONResponse({"queued": qid})
 
     @mcp.custom_route("/search", methods=["GET"])
     async def search_route(request: Request) -> JSONResponse:
@@ -80,9 +80,18 @@ def build_app(db_path: str | Path = config.DB_PATH):
     return build_server(db_path).http_app()
 
 def main() -> None:
+    import threading
+    from .capture import LLMCapturer, RawCapturer
+    from . import worker
     c = db_mod.connect(config.DB_PATH)
     db_mod.init_schema(c)
     c.close()
+    t = threading.Thread(
+        target=worker.run_loop,
+        args=(config.DB_PATH, LLMCapturer(), RawCapturer()),
+        daemon=True,
+    )
+    t.start()
     build_server(config.DB_PATH).run(transport="http", host=config.HOST, port=config.PORT)
 
 if __name__ == "__main__":

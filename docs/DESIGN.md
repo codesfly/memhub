@@ -105,6 +105,7 @@ hook 走 REST(`curl` 最省事),MCP 留给 agent 在会话里智能调用。
 **核心原则:memhub 是"增强"不是"依赖"。**
 - **服务挂了 agent 照常:** hook POST 失败 / 服务没起 → hook 静默跳过 + 写本地日志,**绝不阻断 agent 会话**。
 - **捕获逐级降级:** `claude -p` 失败/超时 → RawCapturer;JSON 解析失败 → 兜底;embedding 失败 → 跳过该条不崩整批;worker 重试 N 次(指数退避)后标 `failed` + 日志。
+  > 注:重试/退避(retry N 次)在 B1 暂未实现——当前 `mark_failed` 为终态、`attempts` 仅自增未读取;留待 Phase 3。失败项不会自动重试,但 `content_hash` 去重保证手动重灌安全。
 - 服务内用 typed errors + 结构化日志,REST 标准状态码,外部调用(claude CLI)带超时。
 
 ## 10. 测试策略(TDD,先写测试)

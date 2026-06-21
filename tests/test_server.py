@@ -18,15 +18,14 @@ def test_health_ok(tmp_path):
     assert r.json()["status"] == "ok"
 
 
-def test_capture_then_search(tmp_path):
-    client, _ = _client(tmp_path)
-    cap = client.post("/capture", json={
-        "transcript": "decided to use JWT for authentication",
-        "project": "p1", "agent": "claude-code", "session_id": "s1"})
-    assert cap.status_code == 200
-    res = client.get("/search", params={"query": "auth login", "project": "p1", "scope": "all"})
-    assert res.status_code == 200
-    assert any("JWT" in m["content"] for m in res.json()["results"])
+def test_capture_enqueues(tmp_path):
+    client, db_path = _client(tmp_path)
+    r = client.post("/capture", json={"transcript": "decided to use JWT", "project": "p1", "agent": "claude-code"})
+    assert r.status_code == 200
+    assert "queued" in r.json()
+    conn = db_mod.connect(db_path)
+    assert conn.execute("SELECT count(*) FROM capture_queue WHERE status='pending'").fetchone()[0] == 1
+    conn.close()
 
 
 def test_capture_malformed_json_returns_400(tmp_path):
