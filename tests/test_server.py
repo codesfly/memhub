@@ -38,3 +38,17 @@ def test_search_bad_limit_returns_400(tmp_path):
     client, _ = _client(tmp_path)
     r = client.get("/search", params={"query": "x", "limit": "abc"})
     assert r.status_code == 400
+
+
+def test_capture_skips_self_referential(tmp_path):
+    # a transcript containing memhub's own extraction prompt is feedback-loop
+    # noise (or a session that pasted the prompt) — it must not be enqueued.
+    from memhub.capture import _EXTRACT_PROMPT
+    client, db_path = _client(tmp_path)
+    r = client.post("/capture", json={"transcript": f"user: {_EXTRACT_PROMPT}",
+                                       "project": "p", "agent": "claude-code"})
+    assert r.status_code == 200
+    conn = db_mod.connect(db_path)
+    pending = conn.execute("SELECT count(*) FROM capture_queue WHERE status='pending'").fetchone()[0]
+    conn.close()
+    assert pending == 0

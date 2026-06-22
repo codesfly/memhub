@@ -3,6 +3,7 @@
 Each item: {"content": str, "kind": str, "tags": list, "scope": str}
 """
 import json
+import os
 import subprocess
 from typing import Protocol
 
@@ -40,6 +41,18 @@ _EXTRACT_PROMPT = (
     "No prose, no markdown fences, only the JSON array."
 )
 
+# Sentinel: the opening of _EXTRACT_PROMPT. A transcript containing it is either
+# memhub capturing its own `claude -p` extraction call (a feedback loop) or a
+# session that pasted the prompt — never a real memory. Kept deliberately narrow
+# (not the whole skill blurb) so normal sessions that merely load memhub are not
+# filtered out.
+_SELF_MARKER = "You extract durable memories from an AI coding session transcript"
+
+
+def is_self_referential(text: str) -> bool:
+    """True if the transcript is memhub's own machinery, not a real session."""
+    return _SELF_MARKER in text
+
 
 def _extract_json_array(text: str) -> list[dict]:
     # tolerate ```json fences or surrounding prose: grab first [ ... last ]
@@ -68,6 +81,9 @@ class LLMCapturer:
         proc = subprocess.run(
             [self.model_cmd, "-p", _EXTRACT_PROMPT],
             input=transcript, text=True, capture_output=True, timeout=self.timeout,
+            # Mark this subprocess so the SessionEnd hook skips it — otherwise the
+            # extraction call's own session gets captured: an infinite feedback loop.
+            env={**os.environ, "MEMHUB_EXTRACTING": "1"},
         )
         if proc.returncode != 0:
             raise CaptureError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")

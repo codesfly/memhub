@@ -67,3 +67,29 @@ def test_llm_capturer_rejects_empty_without_shelling_out():
             raised = True
         assert raised
         run.assert_not_called()  # never invoke claude for empty input
+
+
+def test_is_self_referential_detects_extract_prompt():
+    from memhub.capture import is_self_referential, _EXTRACT_PROMPT
+    assert is_self_referential(f"user: {_EXTRACT_PROMPT}\nassistant: [{{}}]") is True
+
+
+def test_is_self_referential_false_for_normal_session():
+    from memhub.capture import is_self_referential
+    assert is_self_referential("user: 把 API 超时改成 30 秒\nassistant: 好的，已改") is False
+
+
+def test_self_marker_stays_in_sync_with_prompt():
+    # the sentinel must remain a substring of the real prompt, or the guard rots
+    from memhub.capture import _SELF_MARKER, _EXTRACT_PROMPT
+    assert _SELF_MARKER in _EXTRACT_PROMPT
+
+
+def test_llm_capturer_marks_subprocess_to_break_self_capture_loop():
+    out = json.dumps([{"content": "x", "kind": "fact", "tags": [], "scope": "current"}])
+    with patch("memhub.capture.subprocess.run", return_value=_fake_run(out)) as run:
+        LLMCapturer().capture("some real transcript", {})
+    env = run.call_args.kwargs.get("env")
+    assert env is not None, "extraction must pass an env so the hook can skip it"
+    assert env.get("MEMHUB_EXTRACTING") == "1"
+    assert "PATH" in env, "must inherit os.environ, not replace it"

@@ -4,6 +4,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, HTMLResponse
 from fastmcp import FastMCP
 from . import db as db_mod, store, search, config, queue, transcript, ui
+from .capture import is_self_referential
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
     mcp = FastMCP("memhub")
@@ -45,6 +46,8 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
         tp = body.get("transcript_path")
         if tp:
             text = transcript.parse_transcript(tp)
+        if is_self_referential(text):
+            return JSONResponse({"queued": None, "skipped": "self-referential"})
         conn = db_mod.connect(db_path)
         try:
             qid = queue.enqueue(conn, {
