@@ -5,7 +5,7 @@ import struct
 import time
 import sqlite3
 
-from . import embedding
+from . import embedding, config
 from .redact import redact
 
 
@@ -17,6 +17,25 @@ def _pack(vec: list[float]) -> bytes:
     return struct.pack("%sf" % len(vec), *vec)
 
 
+def _near_duplicate(conn: sqlite3.Connection, vec: list[float], project: str | None) -> int | None:
+    """id of an existing SAME-PROJECT memory within DEDUP_L2_MAX of `vec`, else None.
+
+    Same-project scope + a tight threshold keep this from merging contradictions:
+    opposite-meaning text scores ~0.88 cosine (L2 ~0.49), well above DEDUP_L2_MAX.
+    """
+    rows = conn.execute(
+        "SELECT memory_id, distance FROM memories_vec WHERE embedding MATCH ? ORDER BY distance LIMIT 5",
+        (_pack(vec),),
+    ).fetchall()
+    for mid, dist in rows:
+        if dist > config.DEDUP_L2_MAX:
+            break  # ascending distance — nothing closer remains
+        row = conn.execute("SELECT project FROM memories WHERE id=?", (mid,)).fetchone()
+        if row and row[0] == project:
+            return mid
+    return None
+
+
 def store_memory(
     conn: sqlite3.Connection,
     content: str,
@@ -26,6 +45,7 @@ def store_memory(
     tags: list[str] | None = None,
     scope: str = "current",
     session_id: str | None = None,
+    dedup: bool = True,
 ) -> int | None:
     content = redact(content)
     if not content.strip():
@@ -35,6 +55,12 @@ def store_memory(
     if existing:
         return existing[0]
 
+    vec = embedding.embed(content)
+    if dedup:
+        dup = _near_duplicate(conn, vec, project)
+        if dup is not None:
+            return dup
+
     cur = conn.execute(
         """INSERT INTO memories (content, content_hash, kind, project, agent, tags, scope, session_id, created_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
@@ -43,7 +69,7 @@ def store_memory(
     mid = cur.lastrowid
     conn.execute(
         "INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)",
-        (mid, _pack(embedding.embed(content))),
+        (mid, _pack(vec)),
     )
     conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
     conn.commit()

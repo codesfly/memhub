@@ -109,3 +109,20 @@ def test_capture_skips_self_referential(tmp_path):
     pending = conn.execute("SELECT count(*) FROM capture_queue WHERE status='pending'").fetchone()[0]
     conn.close()
     assert pending == 0
+
+
+def test_sync_memory_endpoint(tmp_path, monkeypatch):
+    from memhub import config
+    root = tmp_path / "projects"
+    d = root / "proj" / "memory"
+    d.mkdir(parents=True)
+    (d / "a.md").write_text("---\nname: a\n---\n一条够长的耐久记忆内容。\n")
+    monkeypatch.setattr(config, "MEMORY_PROJECTS_ROOT", root)
+    client, db_path = _client(tmp_path)
+    r = client.post("/sync-memory")
+    assert r.status_code == 200
+    assert r.json()["stored"] == 1
+    conn = db_mod.connect(db_path)
+    n = conn.execute("SELECT count(*) FROM memories WHERE agent='claude-memory'").fetchone()[0]
+    conn.close()
+    assert n == 1

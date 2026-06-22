@@ -3,7 +3,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, HTMLResponse
 from fastmcp import FastMCP
-from . import db as db_mod, store, search, config, queue, transcript, ui, settings as settings_mod
+from . import db as db_mod, store, search, config, queue, transcript, ui, settings as settings_mod, memsync
 from .capture import is_self_referential
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
@@ -122,6 +122,15 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
         finally:
             conn.close()
 
+    @mcp.custom_route("/sync-memory", methods=["POST"])
+    async def sync_memory_route(_: Request) -> JSONResponse:
+        """Ingest Claude's curated memory/*.md files (zero-LLM, incremental, idempotent)."""
+        conn = db_mod.connect(db_path)
+        try:
+            return JSONResponse(memsync.sync_once(conn, config.MEMORY_PROJECTS_ROOT))
+        finally:
+            conn.close()
+
     @mcp.custom_route("/inject", methods=["POST"])
     async def inject(request: Request) -> JSONResponse:
         try:
@@ -193,6 +202,12 @@ def main() -> None:
         daemon=True,
     )
     t.start()
+    if config.MEMORY_SYNC_ENABLED:
+        threading.Thread(
+            target=memsync.run_sync_loop,
+            args=(config.DB_PATH, config.MEMORY_PROJECTS_ROOT, config.MEMORY_SYNC_INTERVAL),
+            daemon=True,
+        ).start()
     build_server(config.DB_PATH).run(transport="http", host=config.HOST, port=config.PORT)
 
 if __name__ == "__main__":

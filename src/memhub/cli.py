@@ -24,6 +24,11 @@ def _delete_path(path):
     with urlopen(req, timeout=10) as r:
         return json.loads(r.read())
 
+def _post(path):
+    req = urllib.request.Request(BASE + path, method="POST")
+    with urlopen(req, timeout=60) as r:
+        return json.loads(r.read())
+
 def _print(items):
     if not items:
         print("(no memories)"); return
@@ -37,6 +42,7 @@ def main(argv=None) -> int:
     ps = sub.add_parser("search"); ps.add_argument("query"); ps.add_argument("--scope", default="all")
     pd = sub.add_parser("delete"); pd.add_argument("id"); pd.add_argument("--yes", action="store_true")
     pc = sub.add_parser("clear-pending"); pc.add_argument("--yes", action="store_true")
+    sub.add_parser("sync-memory")
     args = p.parse_args(argv)
     try:
         if args.cmd == "list":
@@ -55,6 +61,9 @@ def main(argv=None) -> int:
                 print("cancelled"); return 0
             data = _delete_path("/capture/pending")
             print(f"deleted {data.get('deleted', 0)} pending captures")
+        elif args.cmd == "sync-memory":
+            data = _post("/sync-memory")
+            print(f"synced: stored {data.get('stored', 0)}, scanned {data.get('scanned', 0)}, skipped {data.get('skipped', 0)}")
     except (urllib.error.URLError, OSError):
         print(f"memhub service unreachable at {BASE} (is it running?)", file=sys.stderr)
         return 1
