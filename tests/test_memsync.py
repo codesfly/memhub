@@ -66,3 +66,30 @@ def test_sync_updates_memory_when_file_edited(conn, tmp_path):
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 1  # updated, not duplicated
     content = conn.execute("SELECT content FROM memories").fetchone()[0]
     assert "第二版" in content and "yarn" in content
+
+
+def test_sync_removes_memory_when_file_deleted(conn, tmp_path):
+    root = tmp_path / "projects"
+    fa = _write(root, "proj", "a", "name: a", "记忆 A 的内容足够长可入库。")
+    _write(root, "proj", "b", "name: b", "记忆 B 的内容足够长可入库。")
+    memsync.sync_memory_files(conn, root)
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 2
+    fa.unlink()  # 删掉文件 a
+    res = memsync.sync_memory_files(conn, root)
+    assert res["deleted"] == 1
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 1
+    assert "记忆 B" in conn.execute("SELECT content FROM memories").fetchone()[0]
+
+
+def test_sync_deletion_spares_non_file_memories(conn, tmp_path):
+    from memhub import store
+    root = tmp_path / "projects"
+    store.store_memory(conn, content="手动笔记，不是文件来源的记忆", project="x", agent="manual", kind="note")
+    _write(root, "proj", "a", "name: a", "文件来源的记忆 A。")
+    memsync.sync_memory_files(conn, root)
+    import shutil
+    shutil.rmtree(root)  # 删掉所有 memory 文件
+    memsync.sync_memory_files(conn, root)
+    # 手动笔记必须留存，只移除文件来源的那条
+    assert conn.execute("SELECT count(*) FROM memories WHERE agent='manual'").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM memories WHERE agent='claude-memory'").fetchone()[0] == 0

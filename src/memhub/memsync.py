@@ -46,11 +46,10 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
     where max_mtime is the new high-water mark to persist for the next run.
     """
     root = Path(projects_root)
+    files = [f for f in sorted(root.glob("*/memory/*.md")) if f.name != "MEMORY.md"]
     scanned = stored = skipped = 0
     max_mtime = since_ts
-    for f in sorted(root.glob("*/memory/*.md")):
-        if f.name == "MEMORY.md":
-            continue  # index file, not a memory
+    for f in files:
         try:
             mt = f.stat().st_mtime
         except OSError:
@@ -83,7 +82,27 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
             stored += 1
         else:
             skipped += 1
-    return {"scanned": scanned, "stored": stored, "skipped": skipped, "max_mtime": max_mtime}
+    deleted = _reconcile_deletions(conn, root, files)
+    return {"scanned": scanned, "stored": stored, "skipped": skipped, "deleted": deleted, "max_mtime": max_mtime}
+
+
+def _reconcile_deletions(conn, root, current_files) -> int:
+    """Remove claude-memory rows whose source file (session_id) no longer exists.
+
+    Only touches file-backed rows under `root` — store_note/capture memories
+    (other agents, or NULL session_id) are never affected.
+    """
+    present = {str(f) for f in current_files}
+    prefix = str(root)
+    rows = conn.execute(
+        "SELECT id, session_id FROM memories WHERE agent='claude-memory' AND session_id IS NOT NULL"
+    ).fetchall()
+    deleted = 0
+    for mid, src in rows:
+        if src.startswith(prefix) and src not in present:
+            store.delete_memory(conn, mid)
+            deleted += 1
+    return deleted
 
 
 def sync_once(conn, projects_root) -> dict:

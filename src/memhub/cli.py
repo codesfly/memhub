@@ -63,7 +63,8 @@ def main(argv=None) -> int:
             print(f"deleted {data.get('deleted', 0)} pending captures")
         elif args.cmd == "sync-memory":
             data = _post("/sync-memory")
-            print(f"synced: stored {data.get('stored', 0)}, scanned {data.get('scanned', 0)}, skipped {data.get('skipped', 0)}")
+            print(f"synced: stored {data.get('stored', 0)}, deleted {data.get('deleted', 0)}, "
+                  f"scanned {data.get('scanned', 0)}, skipped {data.get('skipped', 0)}")
     except (urllib.error.URLError, OSError):
         print(f"memhub service unreachable at {BASE} (is it running?)", file=sys.stderr)
         return 1
