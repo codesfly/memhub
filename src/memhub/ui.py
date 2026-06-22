@@ -8,8 +8,13 @@ PAGE = """<!doctype html>
  body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
  header{padding:14px 20px;background:#161a22;border-bottom:1px solid #262b36;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
  h1{font-size:16px;margin:0 12px 0 0;color:#7aa2f7}
- input,select{background:#0f1115;color:#e6e6e6;border:1px solid #2a3140;border-radius:6px;padding:6px 9px;font-size:13px}
+ input:not([type=checkbox]),select,button{background:#0f1115;color:#e6e6e6;border:1px solid #2a3140;border-radius:6px;padding:6px 9px;font-size:13px}
+ button{cursor:pointer}
+ button:hover{border-color:#56607a}
  input[type=search]{flex:1;min-width:180px}
+ .settings{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto}
+ .toggle{display:flex;align-items:center;gap:5px;color:#c8cfdf;font-size:13px}
+ .status{min-width:120px;color:#8b93a7;font-size:12px}
  main{padding:16px 20px;max-width:900px;margin:0 auto}
  .card{background:#161a22;border:1px solid #262b36;border-radius:8px;padding:12px 14px;margin:10px 0}
  .meta{font-size:12px;color:#8b93a7;display:flex;gap:10px;margin-bottom:6px;align-items:center;flex-wrap:wrap}
@@ -29,11 +34,53 @@ PAGE = """<!doctype html>
   <option>decision</option><option>fact</option><option>convention</option>
   <option>snippet</option><option>note</option><option>raw</option>
  </select>
+ <div class="settings">
+  <select id="capture-mode" title="capture mode">
+   <option value="off">capture off</option>
+   <option value="raw">raw capture</option>
+   <option value="llm">LLM extract</option>
+  </select>
+  <label class="toggle" title="inject memories at session start"><input id="inject-enabled" type="checkbox">inject</label>
+  <button id="clear-pending" title="clear pending captures">clear pending</button>
+  <span id="settings-status" class="status"></span>
+ </div>
 </header>
 <main id="list"><div class="empty">loading…</div></main>
 <script>
 const el = id => document.getElementById(id);
 const esc = s => (s||"").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function status(msg){ el('settings-status').textContent = msg || ''; }
+function settingsLabel(data){
+ const mode = data.capture_mode === 'llm' ? 'LLM' : data.capture_mode === 'off' ? 'capture off' : 'raw';
+ return `${mode} · inject ${data.inject_enabled ? 'on' : 'off'}`;
+}
+async function loadSettings(){
+ try{
+  const data = await (await fetch('/settings')).json();
+  el('capture-mode').value = data.capture_mode || 'raw';
+  el('inject-enabled').checked = !!data.inject_enabled;
+  status(settingsLabel(data));
+ }catch(e){ status('settings unavailable'); }
+}
+async function saveSettings(patch){
+ status('saving…');
+ try{
+  const r = await fetch('/settings',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+  const data = await r.json();
+  if(!r.ok) throw new Error(data.error||'save failed');
+  el('capture-mode').value = data.capture_mode || 'raw';
+  el('inject-enabled').checked = !!data.inject_enabled;
+  status(settingsLabel(data));
+ }catch(e){ status('save failed'); }
+}
+async function clearPending(){
+ if(!confirm('Delete all pending captures?'))return;
+ status('clearing…');
+ try{
+  const data = await (await fetch('/capture/pending',{method:'DELETE'})).json();
+  status(`removed ${data.deleted||0}`);
+ }catch(e){ status('clear failed'); }
+}
 async function load(){
  const q = el('q').value.trim(), project = el('project').value.trim(), kind = el('kind').value;
  let url, key;
@@ -56,6 +103,10 @@ async function load(){
  });
 }
 ['q','project','kind'].forEach(id=>el(id).addEventListener('input',()=>{clearTimeout(window._t);window._t=setTimeout(load,250)}));
+el('capture-mode').addEventListener('change',()=>saveSettings({capture_mode:el('capture-mode').value}));
+el('inject-enabled').addEventListener('change',()=>saveSettings({inject_enabled:el('inject-enabled').checked}));
+el('clear-pending').addEventListener('click', clearPending);
+loadSettings();
 load();
 </script>
 </body></html>"""

@@ -23,3 +23,9 @@ def test_delete_calls_delete(capsys):
     with patch("memhub.cli.urlopen", return_value=_resp({"deleted": True})):
         cli.main(["delete", "5", "--yes"])
     assert "deleted" in capsys.readouterr().out.lower()
+
+
+def test_clear_pending_calls_capture_pending_endpoint(capsys):
+    with patch("memhub.cli.urlopen", return_value=_resp({"deleted": 3})):
+        cli.main(["clear-pending", "--yes"])
+    assert "3" in capsys.readouterr().out

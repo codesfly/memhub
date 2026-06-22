@@ -46,5 +46,19 @@ def init_schema(conn: sqlite3.Connection) -> None:
         attempts INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS service_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
     """)
+    default_mode = config.CAPTURE_MODE if config.CAPTURE_MODE in config.VALID_CAPTURE_MODES else "raw"
+    conn.execute(
+        "INSERT OR IGNORE INTO service_settings(key, value, updated_at) VALUES ('capture_mode', ?, strftime('%s','now'))",
+        (default_mode,),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO service_settings(key, value, updated_at) VALUES ('inject_enabled', ?, strftime('%s','now'))",
+        ("1" if config.INJECT_ENABLED else "0",),
+    )
     conn.commit()

@@ -20,6 +20,7 @@ def test_capture_accepts_transcript_path(tmp_path):
 
 def test_inject_formats_memories(tmp_path):
     client, db_path = _client(tmp_path)
+    client.patch("/settings", json={"inject_enabled": True})
     conn = db_mod.connect(db_path)
     store.store_memory(conn, "auth uses JWT tokens", project="p1", agent="x", kind="decision", scope="current")
     conn.close()
@@ -28,7 +29,16 @@ def test_inject_formats_memories(tmp_path):
     body = r.json()
     assert "context" in body and "JWT" in body["context"] and "memhub" in body["context"]
 
+def test_inject_empty_when_disabled_by_default(tmp_path):
+    client, db_path = _client(tmp_path)
+    conn = db_mod.connect(db_path)
+    store.store_memory(conn, "auth uses JWT tokens", project="p1", agent="x", kind="decision", scope="current")
+    conn.close()
+    r = client.post("/inject", json={"project": "p1"})
+    assert r.status_code == 200 and r.json()["context"] == ""
+
 def test_inject_empty_when_no_memories(tmp_path):
     client, _ = _client(tmp_path)
+    client.patch("/settings", json={"inject_enabled": True})
     r = client.post("/inject", json={"project": "nope"})
     assert r.status_code == 200 and r.json()["context"] == ""

@@ -66,6 +66,10 @@ def test_ui_serves_html(tmp_path):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "memhub" in r.text and "fetch(" in r.text
+    assert "/settings" in r.text
+    assert "capture-mode" in r.text
+    assert "inject-enabled" in r.text
+    assert "/capture/pending" in r.text
 
 
 def test_ui_escapes_id_interpolation():

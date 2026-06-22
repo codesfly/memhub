@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> 本地优先的多 CLI AI agent 共享记忆中枢——自动捕获、自动注入、混合检索。无云、无额外 API key。
+> 本地优先的多 CLI AI agent 共享记忆中枢——可控捕获、可选注入、混合检索。默认无云、无额外 API key。
 
-memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时自动从对话里抽取值得留存的记忆,会话开始时把相关的注入回上下文。全部跑在本地的 SQLite + 本地 embedding 上。Claude Code 已接通;Codex / Gemini CLI 已设计、尚未交付。
+memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时可捕获值得留存的记忆,会话开始时可把相关记忆注入回上下文。除非显式开启 LLM 抽取,否则全部跑在本地的 SQLite + 本地 embedding 上。Claude Code 已接通;Codex / Gemini CLI 已设计、尚未交付。
 
 ## 为什么
 
@@ -12,10 +12,10 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
 
 ## 特性
 
-- **自动捕获** —— SessionEnd hook 把 transcript 喂给 LLM 抽取器(`claude -p`),提炼成结构化记忆(`decision` / `fact` / `convention` / `snippet`);抽取失败时回退到原文切片,不丢数据。
-- **自动注入** —— SessionStart hook 把当前项目最相关的记忆作为 `additionalContext` 注入。
+- **可控捕获** —— SessionEnd 默认只做 raw 原文切片,也可以完全关闭;只有显式切到 `llm` 才会调用 LLM 抽取器(`claude -p`)。
+- **可选注入** —— SessionStart 注入默认关闭,可在 Web UI 或 settings API 里打开。
 - **混合检索** —— 向量(sqlite-vec)+ 关键词(FTS5),用 RRF(Reciprocal Rank Fusion)融合,按 scope 过滤。
-- **本地优先、零 key** —— SQLite + 本地 `fastembed`(all-MiniLM-L6-v2 / 384 维)。无云、无第三方 API key。LLM 抽取复用你现有的 `claude` CLI 认证。
+- **本地优先、默认零 key** —— SQLite + 本地 `fastembed`(all-MiniLM-L6-v2 / 384 维)。除非显式开启 LLM 抽取,否则无云、无第三方 API key;LLM 抽取会复用你现有的 `claude` CLI 认证。
 - **写前脱敏** —— API key / token / 密码在入库前被抹掉。
 - **多 agent 就绪** —— 中立的 REST + MCP 接口,任何 agent 都能读写同一个池;记忆带 `project` / `agent` / `scope` 标签,不绑定所有者。
 - **韧性** —— 服务是"增强"不是"依赖":它挂了,hook 静默跳过、绝不阻断你的 agent;单条捕获失败被隔离,worker 不会被拖死。
@@ -27,8 +27,8 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
 ┌─ memhub 服务 (Python + FastMCP, 127.0.0.1:37650) ──────────────────┐
 │  接口层    MCP (search_memories, store_note)                        │
 │            REST (/capture · /search · /inject · /health)            │
-│  捕获器    LLMCapturer (claude -p, 抽 JSON)   →  主                  │
-│            RawCapturer (定长切片)            →  兜底                 │
+│  捕获器    RawCapturer (定长切片)            →  默认                 │
+│            LLMCapturer (claude -p, 抽 JSON)   →  显式开启             │
 │  处理      脱敏 → embedding (fastembed 384) → 去重 → 存              │
 │  存储      SQLite + sqlite-vec(向量) + FTS5(关键词) + 队列           │
 │  检索      向量 + 关键词,RRF 融合,scope 过滤                        │
@@ -39,7 +39,7 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
    launchd 服务      → 开机自起,崩溃重启
 ```
 
-三条数据流:**捕获**(写,经持久队列异步处理)、**注入**(会话开始自动读)、**检索**(会话中主动读)。核心逻辑(`db` / `embedding` / `redact` / `store` / `search` / `capture` / `worker`)与接口层(`server`)解耦,每个单元都能独立测试。完整设计与决策记录见 **[docs/DESIGN.md](docs/DESIGN.md)**。
+三条数据流:**捕获**(写,经持久队列异步处理)、**注入**(会话开始可选读)、**检索**(会话中主动读)。核心逻辑(`db` / `embedding` / `redact` / `store` / `search` / `capture` / `worker`)与接口层(`server`)解耦,每个单元都能独立测试。完整设计与决策记录见 **[docs/DESIGN.md](docs/DESIGN.md)**。
 
 ## 环境要求
 
@@ -63,12 +63,12 @@ python3 -m venv .venv && ./.venv/bin/pip install -e .
 curl -s localhost:37650/health    # -> {"status":"ok"}
 ```
 
-装完零交互工作:每次 Claude Code 会话结束被捕获、开始被注入。
+安装后的安全默认值:捕获模式为 `raw`,注入关闭,除非切到 `llm`,否则不会调用 `claude -p`。
 
 ## 工作原理
 
-- **捕获** —— 会话结束 → hook POST `transcript_path` → 服务解析 transcript 并入队 → 后台 worker 用 `claude -p` 抽取结构化记忆(失败回退原文切片)→ 脱敏 → embedding → 存。hook 立即返回,抽取异步,绝不阻断 agent。
-- **注入** —— 会话开始 → hook 向 `/inject` 要当前 `cwd` 的相关记忆 → 作为 `additionalContext` 打印。
+- **捕获** —— 会话结束 → hook POST `transcript_path` → 服务检查捕获模式。`off` 跳过,`raw` 存原文切片,`llm` 才调用 `claude -p` 抽结构化记忆并在失败时回退 raw。hook 立即返回。
+- **注入** —— 会话开始 → hook 向 `/inject` 要当前 `cwd` 的相关记忆;只有注入开关打开时才会返回 `additionalContext`。
 - **检索** —— 会话中 agent 调 `search_memories` MCP 工具按需召回。
 
 ## 使用
@@ -76,6 +76,18 @@ curl -s localhost:37650/health    # -> {"status":"ok"}
 ```bash
 # 检索记忆 (REST)
 curl -s "http://127.0.0.1:37650/search?query=认证&scope=all"
+
+# 查看 / 修改运行时设置
+curl -s http://127.0.0.1:37650/settings
+curl -s -X PATCH http://127.0.0.1:37650/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"capture_mode":"off","inject_enabled":false}'
+
+# 清掉未处理捕获
+memhub clear-pending --yes
+
+# Web UI
+open http://127.0.0.1:37650/ui
 
 # 服务日志
 tail -f ~/.memhub/memhub.log        # 错误日志: ~/.memhub/memhub.err
@@ -93,12 +105,12 @@ launchctl load   ~/Library/LaunchAgents/com.memhub.server.plist
 
 | | memhub | claude-mem | claude-self-reflect | mem0 / OpenMemory | basic-memory |
 |---|---|---|---|---|---|
-| 自动捕获 | ✅ LLM 抽取 | ✅ | ✅ | ✅ | ❌ 手动 |
-| 自动注入 | ✅ | ✅ | ✅ | 部分 | ❌ |
+| 自动捕获 | ✅ raw 默认 / LLM 可选 | ✅ | ✅ | ✅ | ❌ 手动 |
+| 自动注入 | ✅ 可选开启 | ✅ | ✅ | 部分 | ❌ |
 | 多 agent | ✅ REST + MCP | 仅 Claude Code | 仅 Claude Code | ✅ | ✅ MCP |
 | 本地零 key | ✅ | ✅ | ✅ | 需 OpenAI/Docker | ✅ |
 | 依赖 | SQLite + sqlite-vec(轻) | Bun + uv + Chroma + worker | 单 Rust 二进制 | Docker + 向量库 | Python + SQLite |
-| LLM 抽取 | `claude -p`(复用认证) | 有 | 可选(付费) | 有(默认 OpenAI) | LLM 写 Markdown |
+| LLM 抽取 | 可选 `claude -p` | 有 | 可选(付费) | 有(默认 OpenAI) | LLM 写 Markdown |
 | 状态 | 新 | 活跃 | 活跃 | OpenMemory 已停 | 活跃 |
 
 完整对比与出处见 **[docs/COMPARISON.md](docs/COMPARISON.md)**。

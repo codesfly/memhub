@@ -1,6 +1,6 @@
 """Server REST routes smoke tests (capture/search/health)."""
 from starlette.testclient import TestClient
-from memhub import server, db as db_mod
+from memhub import server, db as db_mod, queue
 
 
 def _client(tmp_path):
@@ -25,6 +25,63 @@ def test_capture_enqueues(tmp_path):
     assert "queued" in r.json()
     conn = db_mod.connect(db_path)
     assert conn.execute("SELECT count(*) FROM capture_queue WHERE status='pending'").fetchone()[0] == 1
+    conn.close()
+
+
+def test_capture_skips_when_capture_mode_off(tmp_path):
+    client, db_path = _client(tmp_path)
+    assert client.patch("/settings", json={"capture_mode": "off"}).status_code == 200
+    r = client.post("/capture", json={"transcript": "decided to use JWT", "project": "p1", "agent": "claude-code"})
+    assert r.status_code == 200
+    assert r.json()["skipped"] == "capture-disabled"
+    conn = db_mod.connect(db_path)
+    assert conn.execute("SELECT count(*) FROM capture_queue").fetchone()[0] == 0
+    conn.close()
+
+
+def test_settings_capture_mode_round_trip(tmp_path):
+    client, _ = _client(tmp_path)
+    assert client.get("/settings").json()["capture_mode"] == "raw"
+    r = client.patch("/settings", json={"capture_mode": "llm"})
+    assert r.status_code == 200
+    assert r.json()["capture_mode"] == "llm"
+    assert client.get("/settings").json()["capture_mode"] == "llm"
+
+
+def test_settings_rejects_invalid_capture_mode(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.patch("/settings", json={"capture_mode": "turbo"})
+    assert r.status_code == 400
+
+
+def test_settings_rejects_null_capture_mode(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.patch("/settings", json={"capture_mode": None})
+    assert r.status_code == 400
+
+
+def test_settings_inject_enabled_round_trip(tmp_path):
+    client, _ = _client(tmp_path)
+    assert client.get("/settings").json()["inject_enabled"] is False
+    r = client.patch("/settings", json={"inject_enabled": True})
+    assert r.status_code == 200
+    assert r.json()["inject_enabled"] is True
+    assert client.get("/settings").json()["inject_enabled"] is True
+
+
+def test_clear_pending_endpoint_only_removes_pending(tmp_path):
+    client, db_path = _client(tmp_path)
+    conn = db_mod.connect(db_path)
+    queue.enqueue(conn, {"transcript": "a"})
+    done = queue.enqueue(conn, {"transcript": "b"})
+    queue.mark_done(conn, done)
+    conn.close()
+
+    r = client.delete("/capture/pending")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == 1
+    conn = db_mod.connect(db_path)
+    assert conn.execute("SELECT status, count(*) FROM capture_queue GROUP BY status").fetchall() == [("done", 1)]
     conn.close()
 
 

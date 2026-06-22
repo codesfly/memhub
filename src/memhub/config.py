@@ -9,3 +9,6 @@ EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBED_DIM = 384
 RRF_K = 60  # reciprocal-rank-fusion constant
 DEFAULT_LIMIT = 10
+VALID_CAPTURE_MODES = ("off", "raw", "llm")
+CAPTURE_MODE = os.environ.get("MEMHUB_CAPTURE_MODE", "raw").lower()
+INJECT_ENABLED = os.environ.get("MEMHUB_INJECT_ENABLED", "0").lower() in ("1", "true", "yes", "on")

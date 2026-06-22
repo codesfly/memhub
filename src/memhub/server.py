@@ -3,7 +3,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, HTMLResponse
 from fastmcp import FastMCP
-from . import db as db_mod, store, search, config, queue, transcript, ui
+from . import db as db_mod, store, search, config, queue, transcript, ui, settings as settings_mod
 from .capture import is_self_referential
 
 def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
@@ -42,6 +42,12 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             body = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        conn = db_mod.connect(db_path)
+        try:
+            if settings_mod.get_capture_mode(conn) == "off":
+                return JSONResponse({"queued": None, "skipped": "capture-disabled"})
+        finally:
+            conn.close()
         text = body.get("transcript", "")
         tp = body.get("transcript_path")
         if tp:
@@ -81,6 +87,41 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             conn.close()
         return JSONResponse({"results": results})
 
+    @mcp.custom_route("/settings", methods=["GET"])
+    async def settings_route(_: Request) -> JSONResponse:
+        conn = db_mod.connect(db_path)
+        try:
+            return JSONResponse(settings_mod.snapshot(conn))
+        finally:
+            conn.close()
+
+    @mcp.custom_route("/settings", methods=["PATCH", "POST"])
+    async def update_settings_route(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        conn = db_mod.connect(db_path)
+        try:
+            if "capture_mode" in body:
+                settings_mod.set_capture_mode(conn, body.get("capture_mode"))
+            if "inject_enabled" in body:
+                settings_mod.set_inject_enabled(conn, body.get("inject_enabled"))
+            return JSONResponse(settings_mod.snapshot(conn))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        finally:
+            conn.close()
+
+    @mcp.custom_route("/capture/pending", methods=["DELETE"])
+    async def clear_pending_route(_: Request) -> JSONResponse:
+        conn = db_mod.connect(db_path)
+        try:
+            deleted = queue.clear_pending(conn)
+            return JSONResponse({"deleted": deleted, "queue": queue.stats(conn)})
+        finally:
+            conn.close()
+
     @mcp.custom_route("/inject", methods=["POST"])
     async def inject(request: Request) -> JSONResponse:
         try:
@@ -89,6 +130,8 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             return JSONResponse({"context": ""}, status_code=200)
         conn = db_mod.connect(db_path)
         try:
+            if not settings_mod.get_inject_enabled(conn):
+                return JSONResponse({"context": ""})
             results = search.search(conn, query="", project=body.get("project"),
                                     scope="current,global", limit=6)
         except Exception:

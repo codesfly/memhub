@@ -32,3 +32,16 @@ def mark_failed(conn: sqlite3.Connection, qid: int) -> None:
         (qid,),
     )
     conn.commit()
+
+
+def clear_pending(conn: sqlite3.Connection) -> int:
+    cur = conn.execute("DELETE FROM capture_queue WHERE status='pending'")
+    conn.commit()
+    return cur.rowcount
+
+
+def stats(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute("SELECT status, count(*) FROM capture_queue GROUP BY status").fetchall()
+    out = {"pending": 0, "done": 0, "failed": 0}
+    out.update({r[0]: r[1] for r in rows})
+    return out

@@ -2,9 +2,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-> Local-first shared memory hub for CLI AI agents — automatic capture, automatic injection, hybrid retrieval. No cloud, no extra API keys.
+> Local-first shared memory hub for CLI AI agents — controlled capture, optional injection, hybrid retrieval. No cloud, no extra API keys by default.
 
-memhub gives your CLI coding agents a shared, persistent memory. When a session ends it automatically extracts durable memories from the transcript; when a session starts it injects the relevant ones back into context. Everything runs locally on SQLite + local embeddings. Claude Code is wired up today; Codex / Gemini CLI are designed for but not yet shipped.
+memhub gives your CLI coding agents a shared, persistent memory. When a session ends it can capture durable memories from the transcript; when a session starts it can inject relevant ones back into context. Everything runs locally on SQLite + local embeddings unless you explicitly enable LLM extraction. Claude Code is wired up today; Codex / Gemini CLI are designed for but not yet shipped.
 
 ## Why
 
@@ -12,10 +12,10 @@ Every CLI agent forgets everything when a session ends, and multiple agents neve
 
 ## Features
 
-- **Automatic capture** — a SessionEnd hook feeds the transcript to an LLM extractor (`claude -p`) that produces structured memories (`decision` / `fact` / `convention` / `snippet`), with raw-chunk fallback if extraction fails.
-- **Automatic injection** — a SessionStart hook injects the most relevant memories for the current project as `additionalContext`.
+- **Controlled capture** — SessionEnd can capture raw transcript chunks by default, stay off entirely, or explicitly use LLM extraction (`claude -p`) when you switch it on.
+- **Optional injection** — SessionStart injection is off by default and can be enabled from the web UI or settings API.
 - **Hybrid retrieval** — vector search (sqlite-vec) + keyword search (FTS5) fused with Reciprocal Rank Fusion, scope-filtered.
-- **Local-first, zero-key** — SQLite + local `fastembed` (all-MiniLM-L6-v2 / 384-dim). No cloud, no third-party API key. LLM extraction reuses your existing `claude` CLI auth.
+- **Local-first, zero-key by default** — SQLite + local `fastembed` (all-MiniLM-L6-v2 / 384-dim). No cloud, no third-party API key unless you explicitly enable LLM extraction, which reuses your existing `claude` CLI auth.
 - **Secret redaction** — API keys / tokens / passwords are stripped before anything is persisted.
 - **Multi-agent ready** — a neutral REST + MCP interface; any agent can read and write the same pool. Memories carry `project` / `agent` / `scope` tags, not an owner.
 - **Resilient** — the service is an enhancement, never a dependency: if it is down, hooks stay silent and never block your agent. A failing capture item is isolated and the worker survives.
@@ -27,8 +27,8 @@ Every CLI agent forgets everything when a session ends, and multiple agents neve
 ┌─ memhub service (Python + FastMCP, 127.0.0.1:37650) ───────────────┐
 │  Interface   MCP (search_memories, store_note)                      │
 │              REST (/capture · /search · /inject · /health)          │
-│  Capturers   LLMCapturer (claude -p, JSON extract)  →  primary      │
-│              RawCapturer (fixed-size chunks)        →  fallback      │
+│  Capturers   RawCapturer (fixed-size chunks)        →  default       │
+│              LLMCapturer (claude -p, JSON extract)  →  opt-in        │
 │  Pipeline    redact → embed (fastembed 384) → dedupe → store         │
 │  Storage     SQLite + sqlite-vec (vector) + FTS5 (keyword) + queue   │
 │  Retrieval   vector + keyword, RRF-fused, scope-filtered             │
@@ -39,7 +39,7 @@ Every CLI agent forgets everything when a session ends, and multiple agents neve
    launchd service   → starts on boot, restarts on crash
 ```
 
-Three data flows — **capture** (write, async via a persistent queue), **inject** (auto-read at session start), **search** (active-read during a session). Core logic (`db` / `embedding` / `redact` / `store` / `search` / `capture` / `worker`) is decoupled from the interface layer (`server`), so every unit is testable on its own. Full design rationale and decision record: **[docs/DESIGN.md](docs/DESIGN.md)**.
+Three data flows — **capture** (write, async via a persistent queue), **inject** (optional read at session start), **search** (active-read during a session). Core logic (`db` / `embedding` / `redact` / `store` / `search` / `capture` / `worker`) is decoupled from the interface layer (`server`), so every unit is testable on its own. Full design rationale and decision record: **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ## Requirements
 
@@ -63,12 +63,12 @@ python3 -m venv .venv && ./.venv/bin/pip install -e .
 curl -s localhost:37650/health    # -> {"status":"ok"}
 ```
 
-From here it works with zero interaction: every Claude Code session-end is captured, every session-start is injected.
+Safe defaults after install: capture mode is `raw`, injection is off, and `claude -p` is never called unless you switch capture mode to `llm`.
 
 ## How it works
 
-- **Capture** — session ends → hook POSTs the `transcript_path` → server parses the transcript and enqueues it → a background worker runs `claude -p` to extract structured memories (raw-chunk fallback on failure) → redact → embed → store. The hook returns immediately; extraction is async, so your agent is never blocked.
-- **Inject** — session starts → hook asks `/inject` for the most relevant memories for `cwd` → they are printed as `additionalContext`.
+- **Capture** — session ends → hook POSTs the `transcript_path` → server checks capture mode. `off` skips, `raw` enqueues fixed-size raw chunks, and `llm` runs `claude -p` for structured extraction with raw fallback. The hook returns immediately.
+- **Inject** — session starts → hook asks `/inject` for memories for `cwd`; the route returns context only when injection is enabled.
 - **Search** — during a session an agent calls the `search_memories` MCP tool for on-demand recall.
 
 ## Usage
@@ -76,6 +76,18 @@ From here it works with zero interaction: every Claude Code session-end is captu
 ```bash
 # search memories (REST)
 curl -s "http://127.0.0.1:37650/search?query=auth&scope=all"
+
+# inspect / change runtime settings
+curl -s http://127.0.0.1:37650/settings
+curl -s -X PATCH http://127.0.0.1:37650/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"capture_mode":"off","inject_enabled":false}'
+
+# clear unprocessed captures
+memhub clear-pending --yes
+
+# web UI
+open http://127.0.0.1:37650/ui
 
 # service logs
 tail -f ~/.memhub/memhub.log        # errors: ~/.memhub/memhub.err
@@ -93,12 +105,12 @@ launchctl load   ~/Library/LaunchAgents/com.memhub.server.plist
 
 | | memhub | claude-mem | claude-self-reflect | mem0 / OpenMemory | basic-memory |
 |---|---|---|---|---|---|
-| Auto-capture | ✅ LLM extract | ✅ | ✅ | ✅ | ❌ manual |
-| Auto-inject | ✅ | ✅ | ✅ | partial | ❌ |
+| Auto-capture | ✅ raw default / LLM opt-in | ✅ | ✅ | ✅ | ❌ manual |
+| Auto-inject | ✅ opt-in | ✅ | ✅ | partial | ❌ |
 | Multi-agent | ✅ REST + MCP | Claude Code only | Claude Code only | ✅ | ✅ MCP |
 | Local, zero-key | ✅ | ✅ | ✅ | needs OpenAI/Docker | ✅ |
 | Dependencies | SQLite + sqlite-vec (light) | Bun + uv + Chroma + worker | single Rust binary | Docker + vector DB | Python + SQLite |
-| LLM extraction | `claude -p` (reuses auth) | yes | optional (paid) | yes (OpenAI) | LLM writes Markdown |
+| LLM extraction | opt-in `claude -p` | yes | optional (paid) | yes (OpenAI) | LLM writes Markdown |
 | Status | new | active | active | OpenMemory sunset | active |
 
 Full detail and sourcing: **[docs/COMPARISON.md](docs/COMPARISON.md)**.
