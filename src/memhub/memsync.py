@@ -88,7 +88,10 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
             skipped += 1
             continue
         proj = _resolve_project(f.parent.parent, cwd_cache)
-        scope = "global" if ftype in ("user", "feedback") else "current"
+        # only user-identity is genuinely cross-project; feedback/project/reference
+        # live in a project's memory dir and are project-local (else they pollute
+        # every project's session-start inject)
+        scope = "global" if ftype == "user" else "current"
         tags = [t for t in (ftype, name) if t]
         try:
             # keyed on file path so an edited file UPDATES its row instead of dup/skip

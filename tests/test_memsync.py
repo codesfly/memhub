@@ -9,6 +9,17 @@ def _write(root, project, name, frontmatter, body):
     return f
 
 
+def test_sync_scopes_only_user_type_as_global(conn, tmp_path):
+    root = tmp_path / "projects"
+    _write(root, "-Users-jiumu-Desktop-douyin", "u", "name: u\nmetadata:\n  type: user", "用户身份：15 年全栈")
+    _write(root, "-Users-jiumu-Desktop-douyin", "fb", "name: fb\nmetadata:\n  type: feedback", "douyin 项目的反馈指引细节")
+    memsync.sync_memory_files(conn, root)
+    scopes = dict(conn.execute(
+        "SELECT json_extract(tags,'$[0]'), scope FROM memories WHERE agent='claude-memory'").fetchall())
+    assert scopes["user"] == "global"      # user identity — cross-project
+    assert scopes["feedback"] == "current"  # project-local guidance, NOT global
+
+
 def test_sync_resolves_real_cwd_as_project(conn, tmp_path):
     import json
     root = tmp_path / "projects"
