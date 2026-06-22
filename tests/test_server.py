@@ -126,3 +126,15 @@ def test_sync_memory_endpoint(tmp_path, monkeypatch):
     n = conn.execute("SELECT count(*) FROM memories WHERE agent='claude-memory'").fetchone()[0]
     conn.close()
     assert n == 1
+
+
+def test_projects_endpoint(tmp_path):
+    from memhub import store
+    client, db_path = _client(tmp_path)
+    conn = db_mod.connect(db_path)
+    store.store_memory(conn, content="只读查询走 replica 副本", project="p2", agent="x")
+    store.store_memory(conn, content="统一用 pnpm 做包管理", project="p1", agent="x")
+    conn.close()
+    r = client.get("/projects")
+    assert r.status_code == 200
+    assert r.json()["projects"] == ["p1", "p2"]

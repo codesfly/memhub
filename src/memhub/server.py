@@ -155,6 +155,14 @@ def build_server(db_path: str | Path = config.DB_PATH) -> FastMCP:
             lines.append(f"- [{r['kind']}] {snippet}")
         return JSONResponse({"context": "\n".join(lines)})
 
+    @mcp.custom_route("/projects", methods=["GET"])
+    async def projects_route(_: Request) -> JSONResponse:
+        conn = db_mod.connect(db_path)
+        try:
+            return JSONResponse({"projects": store.list_projects(conn)})
+        finally:
+            conn.close()
+
     @mcp.custom_route("/memories", methods=["GET"])
     async def list_memories_route(request: Request) -> JSONResponse:
         q = request.query_params

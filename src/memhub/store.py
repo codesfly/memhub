@@ -94,6 +94,14 @@ def list_memories(conn, project=None, kind=None, limit=50, offset=0):
              "agent": r[4], "scope": r[5], "created_at": r[6]} for r in rows]
 
 
+def list_projects(conn) -> list[str]:
+    """Distinct non-empty project names, sorted — for the web UI project filter."""
+    rows = conn.execute(
+        "SELECT DISTINCT project FROM memories WHERE project IS NOT NULL AND project != '' ORDER BY project"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def delete_memory(conn, mid) -> bool:
     cur = conn.execute("DELETE FROM memories WHERE id=?", (mid,))
     conn.execute("DELETE FROM memories_vec WHERE memory_id=?", (mid,))

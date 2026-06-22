@@ -54,3 +54,11 @@ def test_store_keeps_near_dup_across_different_projects(conn):
     b = store.store_memory(conn, content="统一用 pnpm，禁止 npm 或 yarn", project="p2", agent="x")
     assert b != a
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 2
+
+
+def test_list_projects_returns_distinct_sorted(conn):
+    store.store_memory(conn, content="统一用 pnpm 做包管理", project="zixungou", agent="x")
+    store.store_memory(conn, content="HTTP 客户端超时设 30 秒", project="douyin", agent="x")
+    store.store_memory(conn, content="只读查询走 replica 副本库", project="douyin", agent="x")
+    store.store_memory(conn, content="封面前三秒必须给结果", project=None, agent="x")
+    assert store.list_projects(conn) == ["douyin", "zixungou"]
