@@ -72,8 +72,13 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
         proj = _short_project(f.parent.parent.name)
         scope = "global" if ftype in ("user", "feedback") else "current"
         tags = [t for t in (ftype, name) if t]
-        mid = store.store_memory(conn, content=content, project=proj, agent="claude-memory",
-                                 kind="note", tags=tags, scope=scope)
+        try:
+            # keyed on file path so an edited file UPDATES its row instead of dup/skip
+            mid = store.upsert_memory(conn, content=content, source_key=str(f), project=proj,
+                                      agent="claude-memory", kind="note", tags=tags, scope=scope)
+        except Exception:
+            skipped += 1
+            continue
         if mid:
             stored += 1
         else:

@@ -54,3 +54,15 @@ def test_sync_returns_high_water_mtime(conn, tmp_path):
     f = _write(root, "proj", "a", "name: a", "记忆内容足够长以便入库。")
     res = memsync.sync_memory_files(conn, root)
     assert res["max_mtime"] >= f.stat().st_mtime
+
+
+def test_sync_updates_memory_when_file_edited(conn, tmp_path):
+    root = tmp_path / "projects"
+    f = _write(root, "proj", "a", "name: a", "第一版：关于 pnpm 的团队约定细节。")
+    memsync.sync_memory_files(conn, root)
+    # edit the file's body, then re-sync
+    f.write_text("---\nname: a\n---\n第二版：约定改成 yarn，补充了不少新的说明内容。\n")
+    memsync.sync_memory_files(conn, root)
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 1  # updated, not duplicated
+    content = conn.execute("SELECT content FROM memories").fetchone()[0]
+    assert "第二版" in content and "yarn" in content

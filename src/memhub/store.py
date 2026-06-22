@@ -76,6 +76,57 @@ def store_memory(
     return mid
 
 
+def upsert_memory(
+    conn: sqlite3.Connection,
+    content: str,
+    source_key: str,
+    project: str | None = None,
+    agent: str | None = None,
+    kind: str = "note",
+    tags: list[str] | None = None,
+    scope: str = "current",
+) -> int | None:
+    """Insert or update a memory identified by a stable `source_key` (stored in session_id).
+
+    For file-backed sync: editing the source UPDATES the same row instead of being
+    skipped as a near-dup or stored as a duplicate. No vector near-dup merge here —
+    source_key is the identity.
+    """
+    content = redact(content)
+    if not content.strip():
+        return None
+    h = _hash(content)
+    row = conn.execute(
+        "SELECT id, content_hash FROM memories WHERE agent=? AND session_id=?",
+        (agent, source_key),
+    ).fetchone()
+    vec = embedding.embed(content)
+    if row:
+        mid, old_hash = row
+        if old_hash == h:
+            return mid  # unchanged
+        conn.execute(
+            "UPDATE memories SET content=?, content_hash=?, kind=?, tags=?, scope=? WHERE id=?",
+            (content, h, kind, json.dumps(tags or []), scope, mid),
+        )
+        conn.execute("DELETE FROM memories_vec WHERE memory_id=?", (mid,))
+        conn.execute("INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)", (mid, _pack(vec)))
+        conn.execute("DELETE FROM memories_fts WHERE rowid=?", (mid,))
+        conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
+        conn.commit()
+        return mid
+    cur = conn.execute(
+        """INSERT INTO memories (content, content_hash, kind, project, agent, tags, scope, session_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (content, h, kind, project, agent, json.dumps(tags or []), scope, source_key, int(time.time())),
+    )
+    mid = cur.lastrowid
+    conn.execute("INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)", (mid, _pack(vec)))
+    conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
+    conn.commit()
+    return mid
+
+
 def list_memories(conn, project=None, kind=None, limit=50, offset=0):
     # Management view: intentionally unscoped (lists across ALL projects),
     # unlike search.py's fail-closed scope model. Local single-user tool.

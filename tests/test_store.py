@@ -62,3 +62,36 @@ def test_list_projects_returns_distinct_sorted(conn):
     store.store_memory(conn, content="只读查询走 replica 副本库", project="douyin", agent="x")
     store.store_memory(conn, content="封面前三秒必须给结果", project=None, agent="x")
     assert store.list_projects(conn) == ["douyin", "zixungou"]
+
+
+def test_upsert_inserts_new_with_source_key(conn):
+    mid = store.upsert_memory(conn, content="原始内容一二三四", source_key="/p/a.md",
+                              project="p", agent="claude-memory")
+    row = conn.execute("SELECT content, session_id FROM memories WHERE id=?", (mid,)).fetchone()
+    assert row[0] == "原始内容一二三四"
+    assert row[1] == "/p/a.md"
+
+
+def test_upsert_updates_same_row_on_edit(conn):
+    a = store.upsert_memory(conn, content="第一版：关于 pnpm 的团队约定", source_key="/p/a.md",
+                            project="p", agent="claude-memory")
+    b = store.upsert_memory(conn, content="第二版：约定改成 yarn，补充了一些新说明", source_key="/p/a.md",
+                            project="p", agent="claude-memory")
+    assert b == a  # same row updated in place
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 1
+    assert conn.execute("SELECT content FROM memories WHERE id=?", (a,)).fetchone()[0] == "第二版：约定改成 yarn，补充了一些新说明"
+
+
+def test_upsert_noop_when_unchanged(conn):
+    a = store.upsert_memory(conn, content="不变的内容", source_key="/p/a.md", project="p", agent="claude-memory")
+    b = store.upsert_memory(conn, content="不变的内容", source_key="/p/a.md", project="p", agent="claude-memory")
+    assert b == a
+    assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 1
+
+
+def test_upsert_refreshes_index_on_update(conn):
+    a = store.upsert_memory(conn, content="old alpha 内容", source_key="/p/a.md", project="p", agent="claude-memory")
+    store.upsert_memory(conn, content="new beta 内容", source_key="/p/a.md", project="p", agent="claude-memory")
+    fts = conn.execute("SELECT content FROM memories_fts WHERE rowid=?", (a,)).fetchone()[0]
+    assert "beta" in fts and "alpha" not in fts
+    assert conn.execute("SELECT count(*) FROM memories_vec WHERE memory_id=?", (a,)).fetchone()[0] == 1
