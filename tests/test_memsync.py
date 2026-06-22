@@ -9,6 +9,20 @@ def _write(root, project, name, frontmatter, body):
     return f
 
 
+def test_sync_resolves_real_cwd_as_project(conn, tmp_path):
+    import json
+    root = tmp_path / "projects"
+    pdir = root / "-Users-jiumu-Desktop-douyin"
+    (pdir / "memory").mkdir(parents=True)
+    (pdir / "sess.jsonl").write_text(
+        json.dumps({"type": "user", "cwd": "/Users/jiumu/Desktop/douyin",
+                    "message": {"content": "hi"}}) + "\n")
+    (pdir / "memory" / "a.md").write_text("---\nname: a\n---\n一条 douyin 项目的记忆内容。\n")
+    memsync.sync_memory_files(conn, root)
+    proj = conn.execute("SELECT project FROM memories WHERE agent='claude-memory'").fetchone()[0]
+    assert proj == "/Users/jiumu/Desktop/douyin"  # the cwd inject/capture send, not a short label
+
+
 def test_sync_ingests_memory_file(conn, tmp_path):
     root = tmp_path / "projects"
     _write(root, "-Users-jiumu-Desktop-douyin", "pnpm-rule",

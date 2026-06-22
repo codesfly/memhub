@@ -4,6 +4,7 @@ These files are already agent-distilled structured memories — so this is a pur
 read -> store, zero LLM. store_memory() handles redaction, embedding, content-hash
 idempotency and near-dup merge, so re-running is safe.
 """
+import json
 import re
 import time
 from pathlib import Path
@@ -13,12 +14,29 @@ from . import store
 _FM = re.compile(r"^---\n(.*?)\n---\n?(.*)$", re.S)
 
 
-def _short_project(dirname: str) -> str:
-    """Encoded project dir (-Users-jiumu-Desktop-douyin) -> short label (douyin)."""
-    for pre in ("-Users-jiumu-Desktop-", "-Users-jiumu-Code-", "-Users-jiumu-"):
-        if dirname.startswith(pre):
-            return dirname[len(pre):] or "home"
-    return dirname
+def _resolve_project(project_dir, cache: dict) -> str:
+    """Real working dir for a ~/.claude/projects/<encoded>/ dir, read from a transcript's
+    `cwd`. Claude Code's dir-name encoding (/ -> -) is lossy for paths with dashes, so we
+    read the actual cwd instead of decoding. This MUST equal the cwd the inject/capture
+    hooks send, or project-scoped recall silently misses. Falls back to the dir name."""
+    key = str(project_dir)
+    if key in cache:
+        return cache[key]
+    cwd = None
+    for jf in sorted(project_dir.glob("*.jsonl")):
+        try:
+            for line in jf.read_text(errors="replace").splitlines():
+                if '"cwd"' not in line:
+                    continue
+                cwd = (json.loads(line) or {}).get("cwd")
+                if cwd:
+                    break
+        except Exception:
+            continue
+        if cwd:
+            break
+    cache[key] = cwd or project_dir.name
+    return cache[key]
 
 
 def _parse(md: str):
@@ -49,6 +67,7 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
     files = [f for f in sorted(root.glob("*/memory/*.md")) if f.name != "MEMORY.md"]
     scanned = stored = skipped = 0
     max_mtime = since_ts
+    cwd_cache: dict = {}
     for f in files:
         try:
             mt = f.stat().st_mtime
@@ -68,7 +87,7 @@ def sync_memory_files(conn, projects_root, since_ts: float = 0.0) -> dict:
         if not content.strip():
             skipped += 1
             continue
-        proj = _short_project(f.parent.parent.name)
+        proj = _resolve_project(f.parent.parent, cwd_cache)
         scope = "global" if ftype in ("user", "feedback") else "current"
         tags = [t for t in (ftype, name) if t]
         try:
