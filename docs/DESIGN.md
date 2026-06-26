@@ -53,7 +53,7 @@ memhub 是一个**本地优先的共享记忆中枢**,让多个 CLI AI agent(Cla
 | `memories` | `id` PK, `content`, `content_hash` UNIQUE(去重), `kind`(decision/fact/convention/snippet/raw), `project`, `agent`, `tags`(JSON), `scope`(current/global), `session_id`, `created_at` | 记忆本体 |
 | `memories_vec` (sqlite-vec) | `memory_id` → `embedding`(384 float) | 语义检索 |
 | `memories_fts` (FTS5) | `content` (tokenize: porter unicode61) | 关键词检索 |
-| `capture_queue` | `id`, `payload`(transcript+meta), `status`(pending/done/failed), `attempts`, `created_at` | 异步捕获队列,服务重启不丢 |
+| `capture_queue` | `id`, `payload`(transcript+meta), `status`(pending/failed), `attempts`, `created_at` | 异步捕获队列,服务重启不丢;处理成功即删除,仅 failed 留存供诊断 |
 
 ## 5. 捕获管道(写路径)
 
@@ -63,6 +63,7 @@ memhub 是一个**本地优先的共享记忆中枢**,让多个 CLI AI agent(Cla
    - **LLMCapturer:** `claude -p "<抽取prompt>"` 喂 transcript → 产出**强制 JSON 数组**,每条 `{content, kind, tags, scope}`。
    - 失败 / 超时 / JSON 解析失败 → **RawCapturer** 原文切片兜底。
    - 每条:**脱敏**(正则)→ `content_hash` 去重 → embedding → 写 `memories` + `memories_vec` + `memories_fts`。
+4. 成功 → 从 `capture_queue` **删除**该项(done 行从不回读,留着全文 payload 会无界膨胀);失败 → 标 `failed`、累加 `attempts` 留诊断。
    - 成功标 `done`;失败重试 N 次(指数退避)后标 `failed` + 记日志,不静默吞。
 4. `scope` 由 LLM 抽取时顺带判定(通用经验=global / 项目特定=current),用户可后期手改。
 

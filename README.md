@@ -83,6 +83,7 @@ deploy/memory-sync.sh link <git-url>   # other machines: attach to the existing 
 deploy/memory-sync.sh push             # local memories -> remote
 deploy/memory-sync.sh pull             # remote -> local, then rebuild the index (zero-LLM, idempotent)
 deploy/memory-sync.sh schedule [secs]  # optional: launchd timer auto-pushes (default hourly, no-op when unchanged)
+deploy/memory-sync.sh unschedule       # stop the timer
 ```
 
 After `link` / `pull` the db (vectors + FTS) is rebuilt locally from the `.md` files, so nothing binary is ever transferred.
