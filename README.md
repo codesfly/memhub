@@ -65,6 +65,29 @@ curl -s localhost:37650/health    # -> {"status":"ok"}
 
 Safe defaults after install: capture mode is `raw`, injection is off, and `claude -p` is never called unless you switch capture mode to `llm`.
 
+## Sync across machines
+
+memhub is local-first — each machine has its own SQLite db. To share memories, sync the **source `.md` files** (never the db) through a private git repo. Two helper scripts in `deploy/`:
+
+**New machine — one-shot install** (clones repo, installs service + hooks, turns injection on; idempotent):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codesfly/memhub/main/deploy/bootstrap.sh | bash
+```
+
+**Memory sync over a private git repo.** Only `*/memory/*.md` is ever pushed — session transcripts (`.jsonl`) and the SQLite db never leave the machine, enforced by a whitelist `.gitignore` plus a pre-push staging guard that aborts if anything else is staged:
+
+```bash
+deploy/memory-sync.sh init <git-url>   # first machine: create repo at ~/.claude/projects, push memories
+deploy/memory-sync.sh link <git-url>   # other machines: attach to the existing repo, keep local memories
+deploy/memory-sync.sh push             # local memories -> remote
+deploy/memory-sync.sh pull             # remote -> local, then rebuild the index (zero-LLM, idempotent)
+```
+
+After `link` / `pull` the db (vectors + FTS) is rebuilt locally from the `.md` files, so nothing binary is ever transferred.
+
+> **Caveat — cross-machine project scope.** A memory's `project` tag is the real cwd, resolved by reading that project's `*.jsonl` transcript, which is deliberately not synced. On a machine that has never opened a given project locally, that project's *project-local* memories fall back to the encoded directory name and may miss session-start injection. Global (user-identity) memories are unaffected; any project you actually work on has local transcripts there and resolves correctly. Keep the same home path (`/Users/<you>`) on both machines.
+
 ## How it works
 
 - **Capture** — session ends → hook POSTs the `transcript_path` → server checks capture mode. `off` skips, `raw` enqueues fixed-size raw chunks, and `llm` runs `claude -p` for structured extraction with raw fallback. The hook returns immediately.

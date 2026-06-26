@@ -65,6 +65,29 @@ curl -s localhost:37650/health    # -> {"status":"ok"}
 
 安装后的安全默认值:捕获模式为 `raw`,注入关闭,除非切到 `llm`,否则不会调用 `claude -p`。
 
+## 跨机器同步
+
+memhub 是 local-first 的——每台机器各有独立的 SQLite 库。要共享记忆,同步的是**源头 `.md` 文件**(绝不传库),走一个私有 git 仓库。`deploy/` 下两个脚本:
+
+**新机器——一键安装**(clone 仓库、装服务 + hooks、打开注入;幂等):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codesfly/memhub/main/deploy/bootstrap.sh | bash
+```
+
+**记忆走私有 git 仓库同步。**只会推 `*/memory/*.md`——会话日志(`.jsonl`)和 SQLite 库永不离开本机,由白名单 `.gitignore` + push 前的暂存区安全闸双重保证(发现任何别的文件就中止):
+
+```bash
+deploy/memory-sync.sh init <git-url>   # 首台:在 ~/.claude/projects 建库并推送记忆
+deploy/memory-sync.sh link <git-url>   # 其它机:接入已有仓库,保留本地已有记忆
+deploy/memory-sync.sh push             # 本机记忆 -> 远端
+deploy/memory-sync.sh pull             # 远端 -> 本机,然后重建检索库(zero-LLM、幂等)
+```
+
+`link` / `pull` 后,库(向量 + FTS)从 `.md` 在本地重建,不传任何二进制。
+
+> **注意——跨机器的 project 范围。**记忆的 `project` 标签是真实 cwd,靠读该项目的 `*.jsonl` 还原,而 `.jsonl` 故意不同步。在一台从没本地打开过某项目的机器上,该项目的*项目级*记忆会退回用编码目录名,可能匹配不上会话启动注入。全局(用户身份)记忆不受影响;你在某台机器实际工作的项目,本地有 transcript,能正确解析。两台机器保持相同的 home 路径(`/Users/<你>`)。
+
 ## 工作原理
 
 - **捕获** —— 会话结束 → hook POST `transcript_path` → 服务检查捕获模式。`off` 跳过,`raw` 存原文切片,`llm` 才调用 `claude -p` 抽结构化记忆并在失败时回退 raw。hook 立即返回。
