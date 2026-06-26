@@ -19,11 +19,11 @@ def process_pending(conn: sqlite3.Connection, primary, fallback, limit: int = 10
             transcript = payload.get("transcript", "")
             if not transcript.strip():
                 # empty session (e.g. a short home-dir session) — nothing to capture, don't shell out to claude
-                queue.mark_done(conn, qid)
+                queue.delete(conn, qid)
                 done += 1
                 continue
             if mode == "off":
-                queue.mark_done(conn, qid)
+                queue.delete(conn, qid)
                 done += 1
                 continue
             meta = {"project": payload.get("project"), "agent": payload.get("agent"),
@@ -36,7 +36,7 @@ def process_pending(conn: sqlite3.Connection, primary, fallback, limit: int = 10
                     kind=it.get("kind", "raw"), tags=it.get("tags", []),
                     scope=it.get("scope", "current"), session_id=meta["session_id"],
                 )
-            queue.mark_done(conn, qid)
+            queue.delete(conn, qid)
             done += 1
         except Exception:
             logger.exception("capture/store failed for qid=%s", qid)

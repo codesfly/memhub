@@ -21,8 +21,10 @@ def claim_pending(conn: sqlite3.Connection, limit: int = 10) -> list[tuple[int, 
     return [(r[0], r[1]) for r in rows]
 
 
-def mark_done(conn: sqlite3.Connection, qid: int) -> None:
-    conn.execute("UPDATE capture_queue SET status='done' WHERE id=?", (qid,))
+def delete(conn: sqlite3.Connection, qid: int) -> None:
+    """Remove a fully-processed item. Done rows are never read back, and each carries
+    the full transcript payload, so keeping them would grow capture_queue unbounded."""
+    conn.execute("DELETE FROM capture_queue WHERE id=?", (qid,))
     conn.commit()
 
 

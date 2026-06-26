@@ -73,15 +73,15 @@ def test_clear_pending_endpoint_only_removes_pending(tmp_path):
     client, db_path = _client(tmp_path)
     conn = db_mod.connect(db_path)
     queue.enqueue(conn, {"transcript": "a"})
-    done = queue.enqueue(conn, {"transcript": "b"})
-    queue.mark_done(conn, done)
+    failed = queue.enqueue(conn, {"transcript": "b"})
+    queue.mark_failed(conn, failed)
     conn.close()
 
     r = client.delete("/capture/pending")
     assert r.status_code == 200
     assert r.json()["deleted"] == 1
     conn = db_mod.connect(db_path)
-    assert conn.execute("SELECT status, count(*) FROM capture_queue GROUP BY status").fetchall() == [("done", 1)]
+    assert conn.execute("SELECT status, count(*) FROM capture_queue GROUP BY status").fetchall() == [("failed", 1)]
     conn.close()
 
 

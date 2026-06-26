@@ -72,7 +72,7 @@ def test_process_pending_skips_empty_transcript(conn):
             return []
     n = worker.process_pending(conn, primary=Spy(), fallback=Spy())
     assert called["n"] == 0  # capturer NOT called for empty transcript
-    assert conn.execute("SELECT status FROM capture_queue").fetchone()[0] == "done"
+    assert conn.execute("SELECT count(*) FROM capture_queue").fetchone()[0] == 0  # processed item removed from queue
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 0
 
 
@@ -95,5 +95,5 @@ def test_process_pending_off_discards_without_storing(conn):
     queue.enqueue(conn, {"transcript": "do not store", "project": "p1", "agent": "x"})
     n = worker.process_pending(conn, primary=StubCapturer(fail=True), fallback=StubCapturer(fail=True), capture_mode="off")
     assert n == 1
-    assert conn.execute("SELECT status FROM capture_queue").fetchone()[0] == "done"
+    assert conn.execute("SELECT count(*) FROM capture_queue").fetchone()[0] == 0  # processed item removed from queue
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 0

@@ -10,10 +10,11 @@ def test_enqueue_then_claim(conn):
     assert json.loads(pending[0][1])["transcript"] == "hello"
 
 
-def test_mark_done_removes_from_pending(conn):
+def test_delete_removes_item(conn):
     qid = queue.enqueue(conn, {"transcript": "x"})
-    queue.mark_done(conn, qid)
+    queue.delete(conn, qid)
     assert queue.claim_pending(conn, limit=10) == []
+    assert conn.execute("SELECT count(*) FROM capture_queue").fetchone()[0] == 0
 
 
 def test_mark_failed_increments_attempts(conn):
