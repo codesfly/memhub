@@ -82,6 +82,7 @@ deploy/memory-sync.sh init <git-url>   # 首台:在 ~/.claude/projects 建库并
 deploy/memory-sync.sh link <git-url>   # 其它机:接入已有仓库,保留本地已有记忆
 deploy/memory-sync.sh push             # 本机记忆 -> 远端
 deploy/memory-sync.sh pull             # 远端 -> 本机,然后重建检索库(zero-LLM、幂等)
+deploy/memory-sync.sh schedule [秒]    # 可选:launchd 定时自动 push(默认每小时,无变化跳过)
 ```
 
 `link` / `pull` 后,库(向量 + FTS)从 `.md` 在本地重建,不传任何二进制。

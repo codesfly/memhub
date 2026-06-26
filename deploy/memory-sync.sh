@@ -6,10 +6,15 @@
 #   memory-sync.sh link <git-repo-url>   其它机：接入已有远端库（保留本地已有记忆）
 #   memory-sync.sh push                  本机记忆 → 远端
 #   memory-sync.sh pull                  远端 → 本机，并立即重建检索库
+#   memory-sync.sh schedule [秒]         开启 launchd 定时 push（默认每小时；无变化自动跳过）
+#   memory-sync.sh unschedule            关闭定时 push
 set -euo pipefail
+export GIT_TERMINAL_PROMPT=0   # 后台/定时跑时凭据失效就快速失败，绝不卡在密码输入
 
 ROOT="${MEMHUB_MEMORY_ROOT:-$HOME/.claude/projects}"   # = config.MEMORY_PROJECTS_ROOT
 MEMHUB_URL="${MEMHUB_URL:-http://127.0.0.1:37650}"
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)/$(basename "${BASH_SOURCE[0]}")"
+PLIST_PUSH="$HOME/Library/LaunchAgents/com.memhub.memory-push.plist"
 
 say() { printf '\033[1;34m▸ %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -104,10 +109,32 @@ cmd_pull() {
   say "已更新 ✅"
 }
 
+cmd_schedule() {
+  local interval="${1:-3600}"
+  case "$interval" in (*[!0-9]*|'') die "间隔必须是秒数（整数），收到：$interval" ;; esac
+  [ -d "$ROOT/.git" ] || die "$ROOT 还没初始化，先 init 或 link"
+  local tmpl; tmpl="$(dirname "$SELF")/com.memhub.memory-push.plist"
+  [ -f "$tmpl" ] || die "找不到 plist 模板：$tmpl"
+  mkdir -p "$HOME/.memhub" "$HOME/Library/LaunchAgents"
+  sed -e "s#__SCRIPT__#$SELF#g" -e "s#__HOME__#$HOME#g" -e "s#__INTERVAL__#$interval#g" "$tmpl" > "$PLIST_PUSH"
+  launchctl unload "$PLIST_PUSH" 2>/dev/null || true
+  launchctl load "$PLIST_PUSH"
+  say "定时 push 已开启：每 ${interval}s 一次（无变化自动跳过）。日志：~/.memhub/memory-push.log"
+  say "关闭：memory-sync.sh unschedule"
+}
+
+cmd_unschedule() {
+  launchctl unload "$PLIST_PUSH" 2>/dev/null || true
+  rm -f "$PLIST_PUSH"
+  say "定时 push 已关闭"
+}
+
 case "${1:-}" in
   init) shift; cmd_init "$@" ;;
   link) shift; cmd_link "$@" ;;
   push) cmd_push ;;
   pull) cmd_pull ;;
-  *)    die "用法：memory-sync.sh {init <url>|link <url>|push|pull}" ;;
+  schedule) shift; cmd_schedule "$@" ;;
+  unschedule) cmd_unschedule ;;
+  *)    die "用法：memory-sync.sh {init <url>|link <url>|push|pull|schedule [秒]|unschedule}" ;;
 esac
