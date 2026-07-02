@@ -5,7 +5,7 @@ import struct
 import time
 import sqlite3
 
-from . import embedding, config
+from . import embedding, config, fts
 from .redact import redact
 
 
@@ -20,19 +20,19 @@ def _pack(vec: list[float]) -> bytes:
 def _near_duplicate(conn: sqlite3.Connection, vec: list[float], project: str | None) -> int | None:
     """id of an existing SAME-PROJECT memory within DEDUP_L2_MAX of `vec`, else None.
 
-    Same-project scope + a tight threshold keep this from merging contradictions:
-    opposite-meaning text scores ~0.88 cosine (L2 ~0.49), well above DEDUP_L2_MAX.
+    Scoped to the project inside the KNN itself — a global top-N would let crowded
+    neighbor projects mask a real same-project dup. The tight threshold keeps
+    opposite-meaning text (L2 ~0.58 on the multilingual model) unmerged.
     """
-    rows = conn.execute(
-        "SELECT memory_id, distance FROM memories_vec WHERE embedding MATCH ? ORDER BY distance LIMIT 5",
-        (_pack(vec),),
-    ).fetchall()
-    for mid, dist in rows:
-        if dist > config.DEDUP_L2_MAX:
-            break  # ascending distance — nothing closer remains
-        row = conn.execute("SELECT project FROM memories WHERE id=?", (mid,)).fetchone()
-        if row and row[0] == project:
-            return mid
+    row = conn.execute(
+        "SELECT memory_id, distance FROM memories_vec "
+        "WHERE embedding MATCH ? AND k = 1 "
+        "AND memory_id IN (SELECT id FROM memories WHERE project IS ?) "
+        "ORDER BY distance",
+        (_pack(vec), project),
+    ).fetchone()
+    if row and row[1] <= config.DEDUP_L2_MAX:
+        return row[0]
     return None
 
 
@@ -71,7 +71,7 @@ def store_memory(
         "INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)",
         (mid, _pack(vec)),
     )
-    conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
+    conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, fts.index_text(content)))
     conn.commit()
     return mid
 
@@ -112,7 +112,7 @@ def upsert_memory(
         conn.execute("DELETE FROM memories_vec WHERE memory_id=?", (mid,))
         conn.execute("INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)", (mid, _pack(vec)))
         conn.execute("DELETE FROM memories_fts WHERE rowid=?", (mid,))
-        conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
+        conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, fts.index_text(content)))
         conn.commit()
         return mid
     cur = conn.execute(
@@ -122,9 +122,38 @@ def upsert_memory(
     )
     mid = cur.lastrowid
     conn.execute("INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)", (mid, _pack(vec)))
-    conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, content))
+    conn.execute("INSERT INTO memories_fts(rowid, content) VALUES (?, ?)", (mid, fts.index_text(content)))
     conn.commit()
     return mid
+
+
+def reindex(conn: sqlite3.Connection, batch_size: int = 64) -> int:
+    """Re-embed every memory and rebuild the FTS index.
+
+    Run after changing EMBED_MODEL (vectors from different models must not share a
+    table) or FTS text rules. One transaction: a crash leaves the old index intact.
+    """
+    rows = conn.execute("SELECT id, content FROM memories ORDER BY id").fetchall()
+    if not rows:
+        return 0
+    probe = embedding.embed(rows[0][1])
+    if len(probe) != config.EMBED_DIM:
+        raise ValueError(f"model returns {len(probe)}-dim vectors, schema expects {config.EMBED_DIM}")
+    conn.execute("DELETE FROM memories_vec")
+    conn.execute("DELETE FROM memories_fts")
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i + batch_size]
+        vecs = embedding.embed_batch([content for _, content in batch])
+        conn.executemany(
+            "INSERT INTO memories_vec(memory_id, embedding) VALUES (?, ?)",
+            [(mid, _pack(v)) for (mid, _), v in zip(batch, vecs)],
+        )
+        conn.executemany(
+            "INSERT INTO memories_fts(rowid, content) VALUES (?, ?)",
+            [(mid, fts.index_text(content)) for mid, content in batch],
+        )
+    conn.commit()
+    return len(rows)
 
 
 def list_memories(conn, project=None, kind=None, limit=50, offset=0):

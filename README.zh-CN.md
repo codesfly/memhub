@@ -15,7 +15,7 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
 - **可控捕获** —— SessionEnd 默认只做 raw 原文切片,也可以完全关闭;只有显式切到 `llm` 才会调用 LLM 抽取器(`claude -p`)。
 - **可选注入** —— SessionStart 注入默认关闭,可在 Web UI 或 settings API 里打开。
 - **混合检索** —— 向量(sqlite-vec)+ 关键词(FTS5),用 RRF(Reciprocal Rank Fusion)融合,按 scope 过滤。
-- **本地优先、默认零 key** —— SQLite + 本地 `fastembed`(all-MiniLM-L6-v2 / 384 维)。除非显式开启 LLM 抽取,否则无云、无第三方 API key;LLM 抽取会复用你现有的 `claude` CLI 认证。
+- **本地优先、默认零 key** —— SQLite + 本地 `fastembed`(paraphrase-multilingual-MiniLM-L12-v2,支持中文等 50+ 语言,384 维)。除非显式开启 LLM 抽取,否则无云、无第三方 API key;LLM 抽取会复用你现有的 `claude` CLI 认证。
 - **写前脱敏** —— API key / token / 密码在入库前被抹掉。
 - **多 agent 就绪** —— 中立的 REST + MCP 接口,任何 agent 都能读写同一个池;记忆带 `project` / `agent` / `scope` 标签,不绑定所有者。
 - **韧性** —— 服务是"增强"不是"依赖":它挂了,hook 静默跳过、绝不阻断你的 agent;单条捕获失败被隔离,worker 不会被拖死。
@@ -110,6 +110,9 @@ curl -s -X PATCH http://127.0.0.1:37650/settings \
 
 # 清掉未处理捕获
 memhub clear-pending --yes
+
+# 全量重嵌入 + 重建 FTS(换 MEMHUB_EMBED_MODEL 后跑一次;先停服务,避免 worker 中途写入)
+memhub reindex --yes
 
 # Web UI
 open http://127.0.0.1:37650/ui

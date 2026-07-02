@@ -43,7 +43,23 @@ def main(argv=None) -> int:
     pd = sub.add_parser("delete"); pd.add_argument("id"); pd.add_argument("--yes", action="store_true")
     pc = sub.add_parser("clear-pending"); pc.add_argument("--yes", action="store_true")
     sub.add_parser("sync-memory")
+    pr = sub.add_parser("reindex", help="re-embed all memories + rebuild FTS (after a model switch)")
+    pr.add_argument("--db"); pr.add_argument("--yes", action="store_true")
     args = p.parse_args(argv)
+    if args.cmd == "reindex":
+        # offline maintenance on the db file itself — no service round-trip, and the
+        # embedding model import stays out of the plain REST commands
+        from . import db as db_mod, store
+        path = args.db or config.DB_PATH
+        if not args.yes and input(f"re-embed ALL memories in {path}? [y/N] ").lower() != "y":
+            print("cancelled"); return 0
+        conn = db_mod.connect(path)
+        try:
+            n = store.reindex(conn)
+        finally:
+            conn.close()
+        print(f"reindexed {n} memories")
+        return 0
     try:
         if args.cmd == "list":
             qs = urllib.parse.urlencode({k: v for k, v in

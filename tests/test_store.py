@@ -43,10 +43,22 @@ def test_store_keeps_distinct_facts_same_project(conn):
 
 
 def test_store_does_not_merge_contradiction(conn):
-    # opposite meaning has deceptively high cosine (~0.88) but MUST stay separate
+    # opposite meaning has deceptively high cosine but MUST stay separate
     store.store_memory(conn, content="这项目统一用 pnpm，禁止 npm", project="p1", agent="x")
     store.store_memory(conn, content="这项目别用 pnpm，改用 npm", project="p1", agent="x")
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 2
+
+
+def test_near_dup_detected_even_when_other_projects_crowd_knn(conn):
+    # the near-dup KNN probe must be scoped to the same project up front —
+    # top-5 global neighbors from other projects would otherwise mask the real dup
+    a = store.store_memory(conn, content="团队约定：所有微服务统一用 pnpm，禁止 npm/yarn", project="p1", agent="x")
+    for i in range(6):
+        store.store_memory(conn, content=f"团队约定：所有微服务统一用 pnpm，禁止 npm 或 yarn（第{i}版）",
+                           project="p2", agent="x", dedup=False)
+    b = store.store_memory(conn, content="团队约定：所有微服务统一用 pnpm，禁止 npm 或 yarn", project="p1", agent="x")
+    assert b == a
+    assert conn.execute("SELECT count(*) FROM memories WHERE project='p1'").fetchone()[0] == 1
 
 
 def test_store_keeps_near_dup_across_different_projects(conn):
@@ -95,3 +107,24 @@ def test_upsert_refreshes_index_on_update(conn):
     fts = conn.execute("SELECT content FROM memories_fts WHERE rowid=?", (a,)).fetchone()[0]
     assert "beta" in fts and "alpha" not in fts
     assert conn.execute("SELECT count(*) FROM memories_vec WHERE memory_id=?", (a,)).fetchone()[0] == 1
+
+
+def test_reindex_rebuilds_vec_and_fts(conn):
+    from memhub import search
+    a = store.store_memory(conn, "项目部署流程：用 launchd 定时器每小时推送", project="p", agent="x")
+    store.store_memory(conn, "the api authenticates with JWT tokens", project="p", agent="x")
+    # simulate stale indexes (old embedding model / old FTS text rules)
+    conn.execute("DELETE FROM memories_vec")
+    conn.execute("DELETE FROM memories_fts")
+    conn.commit()
+    n = store.reindex(conn)
+    assert n == 2
+    assert conn.execute("SELECT count(*) FROM memories_vec").fetchone()[0] == 2
+    assert conn.execute("SELECT count(*) FROM memories_fts").fetchone()[0] == 2
+    assert a in search._fts_ids(conn, "部署", 10)  # rebuilt FTS is CJK-segmented
+    results = search.search(conn, "jwt token auth", project="p", scope="current")
+    assert results and "JWT" in results[0]["content"]
+
+
+def test_reindex_empty_db_is_noop(conn):
+    assert store.reindex(conn) == 0

@@ -11,10 +11,17 @@ def test_concurrent_writes_are_consistent(tmp_path):
 
     errors = []
 
+    # genuinely distinct facts: digit-only variants ("memory number 3/5") are
+    # semantic near-dups the write path is SUPPOSED to merge — this test is about
+    # torn writes, so content must not trip the dedup path
+    topics = ["docker networking", "launchd timers", "sqlite wal mode", "jwt auth flow",
+              "pnpm workspaces", "fts5 tokenizers", "rrf rank fusion", "onnx runtime"]
+
     def worker(i):
         try:
             conn = db_mod.connect(db_path)
-            store.store_memory(conn, content=f"memory number {i}", project="p", agent="x")
+            store.store_memory(conn, content=f"thread {i} wrote a fact about {topics[i]}",
+                               project="p", agent="x")
             conn.close()
         except Exception as e:
             errors.append(e)

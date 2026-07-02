@@ -7,6 +7,8 @@ import os
 import subprocess
 from typing import Protocol
 
+from . import config
+
 
 class Capturer(Protocol):
     def capture(self, transcript: str, meta: dict) -> list[dict]:
@@ -14,15 +16,19 @@ class Capturer(Protocol):
 
 
 class RawCapturer:
-    """Fallback: slice transcript into fixed-size chunks."""
+    """Fallback: slice transcript into fixed-size chunks, capped to the transcript tail."""
 
-    def __init__(self, max_chars: int = 1000):
+    def __init__(self, max_chars: int = 1000, max_chunks: int = config.RAW_MAX_CHUNKS):
         self.max_chars = max_chars
+        self.max_chunks = max_chunks
 
     def capture(self, transcript: str, meta: dict) -> list[dict]:
         text = transcript.strip()
         if not text:
             return []
+        # keep the tail: session endings hold the conclusions, and an uncapped
+        # transcript floods the store (one observed session produced 159 chunks)
+        text = text[-(self.max_chars * self.max_chunks):]
         chunks = [text[i:i + self.max_chars] for i in range(0, len(text), self.max_chars)]
         return [{"content": c, "kind": "raw", "tags": [], "scope": "current"} for c in chunks]
 

@@ -17,6 +17,23 @@ def test_raw_capturer_empty_text():
     assert RawCapturer().capture("   ", {}) == []
 
 
+def test_raw_capturer_caps_chunks_keeping_tail():
+    # a giant transcript must not flood the store; the END of a session holds
+    # the conclusions, so the tail is what survives
+    cap = RawCapturer(max_chars=10, max_chunks=3)
+    text = "".join(f"{i:02d}abcdefgh" for i in range(10))  # 100 chars = 10 uncapped chunks
+    items = cap.capture(text, {})
+    assert len(items) == 3
+    assert items[-1]["content"] == text[-10:]
+    assert items[0]["content"] == text[-30:-20]
+
+
+def test_raw_capturer_default_cap_bounds_giant_transcript():
+    from memhub import config
+    items = RawCapturer().capture("x" * (1000 * (config.RAW_MAX_CHUNKS + 25)), {})
+    assert len(items) == config.RAW_MAX_CHUNKS
+
+
 def _fake_run(stdout):
     m = MagicMock()
     m.stdout = stdout

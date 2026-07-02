@@ -29,3 +29,17 @@ def test_clear_pending_calls_capture_pending_endpoint(capsys):
     with patch("memhub.cli.urlopen", return_value=_resp({"deleted": 3})):
         cli.main(["clear-pending", "--yes"])
     assert "3" in capsys.readouterr().out
+
+
+def test_reindex_runs_directly_on_db(tmp_path, capsys):
+    # reindex is an offline maintenance command: it touches the db file directly,
+    # no running service required
+    from memhub import db as db_mod, store
+    p = tmp_path / "r.db"
+    c = db_mod.connect(p)
+    db_mod.init_schema(c)
+    store.store_memory(c, "reindex me 重建索引内容", project="p", agent="x")
+    c.close()
+    rc = cli.main(["reindex", "--db", str(p), "--yes"])
+    assert rc == 0
+    assert "1" in capsys.readouterr().out

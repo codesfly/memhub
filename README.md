@@ -15,7 +15,7 @@ Every CLI agent forgets everything when a session ends, and multiple agents neve
 - **Controlled capture** — SessionEnd can capture raw transcript chunks by default, stay off entirely, or explicitly use LLM extraction (`claude -p`) when you switch it on.
 - **Optional injection** — SessionStart injection is off by default and can be enabled from the web UI or settings API.
 - **Hybrid retrieval** — vector search (sqlite-vec) + keyword search (FTS5) fused with Reciprocal Rank Fusion, scope-filtered.
-- **Local-first, zero-key by default** — SQLite + local `fastembed` (all-MiniLM-L6-v2 / 384-dim). No cloud, no third-party API key unless you explicitly enable LLM extraction, which reuses your existing `claude` CLI auth.
+- **Local-first, zero-key by default** — SQLite + local `fastembed` (paraphrase-multilingual-MiniLM-L12-v2, 50+ languages incl. Chinese, 384-dim). No cloud, no third-party API key unless you explicitly enable LLM extraction, which reuses your existing `claude` CLI auth.
 - **Secret redaction** — API keys / tokens / passwords are stripped before anything is persisted.
 - **Multi-agent ready** — a neutral REST + MCP interface; any agent can read and write the same pool. Memories carry `project` / `agent` / `scope` tags, not an owner.
 - **Resilient** — the service is an enhancement, never a dependency: if it is down, hooks stay silent and never block your agent. A failing capture item is isolated and the worker survives.
@@ -110,6 +110,10 @@ curl -s -X PATCH http://127.0.0.1:37650/settings \
 
 # clear unprocessed captures
 memhub clear-pending --yes
+
+# re-embed everything + rebuild FTS (run once after changing MEMHUB_EMBED_MODEL;
+# stop the service first so the worker doesn't write mid-rebuild)
+memhub reindex --yes
 
 # web UI
 open http://127.0.0.1:37650/ui
