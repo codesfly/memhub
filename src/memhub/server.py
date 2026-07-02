@@ -199,7 +199,7 @@ def build_app(db_path: str | Path = config.DB_PATH):
 
 def main() -> None:
     import threading
-    from .capture import LLMCapturer, RawCapturer
+    from .capture import LLMCapturer, OllamaCapturer, RawCapturer
     from . import worker
     c = db_mod.connect(config.DB_PATH)
     db_mod.init_schema(c)
@@ -207,6 +207,7 @@ def main() -> None:
     t = threading.Thread(
         target=worker.run_loop,
         args=(config.DB_PATH, LLMCapturer(), RawCapturer()),
+        kwargs={"ollama": OllamaCapturer()},
         daemon=True,
     )
     t.start()

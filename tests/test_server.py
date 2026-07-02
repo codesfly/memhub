@@ -54,6 +54,15 @@ def test_settings_rejects_invalid_capture_mode(tmp_path):
     assert r.status_code == 400
 
 
+def test_settings_accepts_ollama_mode(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.patch("/settings", json={"capture_mode": "ollama"})
+    assert r.status_code == 200
+    assert r.json()["capture_mode"] == "ollama"
+    assert "ollama" in r.json()["valid_capture_modes"]
+    assert client.get("/settings").json()["capture_mode"] == "ollama"
+
+
 def test_settings_rejects_null_capture_mode(tmp_path):
     client, _ = _client(tmp_path)
     r = client.patch("/settings", json={"capture_mode": None})

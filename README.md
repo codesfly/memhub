@@ -12,14 +12,14 @@ Every CLI agent forgets everything when a session ends, and multiple agents neve
 
 ## Features
 
-- **Controlled capture** — SessionEnd can capture raw transcript chunks by default, stay off entirely, or explicitly use LLM extraction (`claude -p`) when you switch it on.
+- **Controlled capture** — SessionEnd can capture raw transcript chunks by default, stay off entirely, or run structured extraction when you switch it on: fully local via Ollama (`ollama` mode) or through `claude -p` (`llm` mode).
 - **Optional injection** — SessionStart injection is off by default and can be enabled from the web UI or settings API.
 - **Hybrid retrieval** — vector search (sqlite-vec) + keyword search (FTS5) fused with Reciprocal Rank Fusion, scope-filtered.
 - **Local-first, zero-key by default** — SQLite + local `fastembed` (paraphrase-multilingual-MiniLM-L12-v2, 50+ languages incl. Chinese, 384-dim). No cloud, no third-party API key unless you explicitly enable LLM extraction, which reuses your existing `claude` CLI auth.
 - **Secret redaction** — API keys / tokens / passwords are stripped before anything is persisted.
 - **Multi-agent ready** — a neutral REST + MCP interface; any agent can read and write the same pool. Memories carry `project` / `agent` / `scope` tags, not an owner.
 - **Resilient** — the service is an enhancement, never a dependency: if it is down, hooks stay silent and never block your agent. A failing capture item is isolated and the worker survives.
-- **Pluggable capture** — the LLM extractor is one implementation of a `Capturer` interface; an offline Ollama extractor drops in without touching the pipeline.
+- **Pluggable capture** — extractors implement one `Capturer` interface; the offline Ollama extractor and the `claude -p` extractor are two of them, and both fall back to raw chunks on failure.
 
 ## Architecture
 
@@ -45,7 +45,8 @@ Three data flows — **capture** (write, async via a persistent queue), **inject
 
 - macOS (the service is launchd-based; Linux works with a systemd unit — not yet scripted)
 - Python 3.12+
-- `claude` CLI available on `PATH` (used for LLM extraction; reuses whatever auth your Claude Code already uses)
+- optional, for `ollama` capture mode: [Ollama](https://ollama.com) + a small instruct model — `brew install ollama && brew services start ollama && ollama pull qwen2.5:3b-instruct` (override with `MEMHUB_OLLAMA_MODEL` / `MEMHUB_OLLAMA_URL`)
+- optional, for `llm` capture mode: `claude` CLI on `PATH` with working headless auth (see docs/KNOWN_ISSUES.md — under launchd this is usually absent, which is exactly what `ollama` mode fixes)
 
 ## Install
 
@@ -92,7 +93,7 @@ After `link` / `pull` the db (vectors + FTS) is rebuilt locally from the `.md` f
 
 ## How it works
 
-- **Capture** — session ends → hook POSTs the `transcript_path` → server checks capture mode. `off` skips, `raw` enqueues fixed-size raw chunks, and `llm` runs `claude -p` for structured extraction with raw fallback. The hook returns immediately.
+- **Capture** — session ends → hook POSTs the `transcript_path` → server checks capture mode. `off` skips, `raw` enqueues fixed-size raw chunks, `ollama` extracts structured memories through a local Ollama model, and `llm` does the same through `claude -p`; both extractors fall back to raw on failure. The hook returns immediately.
 - **Inject** — session starts → hook asks `/inject` for memories for `cwd`; the route returns context only when injection is enabled.
 - **Search** — during a session an agent calls the `search_memories` MCP tool for on-demand recall.
 
@@ -148,7 +149,8 @@ Full detail and sourcing: **[docs/COMPARISON.md](docs/COMPARISON.md)**.
 
 - [x] **Phase 1** — service core + async capture pipeline + Claude Code integration (hooks + launchd)
 - [ ] **Phase 2** — Gemini CLI / Codex hooks (service unchanged — neutral REST/MCP)
-- [ ] **Phase 3** — Ollama offline extractor, memory-management CLI, decay / consolidation
+- [x] **Phase 3a** — Ollama offline extractor (`ollama` capture mode, zero cloud auth)
+- [ ] **Phase 3b** — decay / consolidation
 
 ## Uninstall
 

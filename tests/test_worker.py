@@ -97,3 +97,32 @@ def test_process_pending_off_discards_without_storing(conn):
     assert n == 1
     assert conn.execute("SELECT count(*) FROM capture_queue").fetchone()[0] == 0  # processed item removed from queue
     assert conn.execute("SELECT count(*) FROM memories").fetchone()[0] == 0
+
+
+def test_process_pending_ollama_mode_routes_to_ollama_capturer(conn):
+    queue.enqueue(conn, {"transcript": "t", "project": "p1", "agent": "x"})
+    called = {"ollama": 0, "primary": 0}
+
+    class Ollama:
+        def capture(self, transcript, meta):
+            called["ollama"] += 1
+            return [{"content": "structured via ollama", "kind": "fact", "tags": [], "scope": "current"}]
+
+    class Primary:
+        def capture(self, transcript, meta):
+            called["primary"] += 1
+            return []
+
+    n = worker.process_pending(conn, primary=Primary(), fallback=StubCapturer(),
+                               ollama=Ollama(), capture_mode="ollama")
+    assert n == 1
+    assert called == {"ollama": 1, "primary": 0}  # llm capturer must NOT be touched
+    assert conn.execute("SELECT content FROM memories").fetchone()[0] == "structured via ollama"
+
+
+def test_process_pending_ollama_falls_back_to_raw_on_failure(conn):
+    queue.enqueue(conn, {"transcript": "raw fallback text", "project": "p1", "agent": "x"})
+    fallback = StubCapturer(items=[{"content": "raw fallback text", "kind": "raw", "tags": [], "scope": "current"}])
+    worker.process_pending(conn, primary=StubCapturer(fail=True), fallback=fallback,
+                           ollama=StubCapturer(fail=True), capture_mode="ollama")
+    assert conn.execute("SELECT kind FROM memories").fetchone()[0] == "raw"

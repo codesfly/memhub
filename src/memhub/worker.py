@@ -8,7 +8,7 @@ from . import queue, store, db as db_mod, settings as settings_mod
 logger = logging.getLogger("memhub.worker")
 
 def process_pending(conn: sqlite3.Connection, primary, fallback, limit: int = 10,
-                    capture_mode: str | None = None) -> int:
+                    capture_mode: str | None = None, ollama=None) -> int:
     """Process up to `limit` queued items. A failure on one item logs + marks it
     failed and continues; it never aborts the batch or propagates."""
     mode = settings_mod.get_capture_mode(conn) if capture_mode is None else settings_mod.normalize_capture_mode(capture_mode)
@@ -28,8 +28,9 @@ def process_pending(conn: sqlite3.Connection, primary, fallback, limit: int = 10
                 continue
             meta = {"project": payload.get("project"), "agent": payload.get("agent"),
                     "session_id": payload.get("session_id")}
+            extractor = ollama if mode == "ollama" else primary
             items = (fallback.capture(transcript, meta) if mode == "raw"
-                     else _capture_with_fallback(transcript, meta, primary, fallback))
+                     else _capture_with_fallback(transcript, meta, extractor, fallback))
             for it in items:
                 store.store_memory(
                     conn, content=it["content"], project=meta["project"], agent=meta["agent"],
@@ -51,12 +52,12 @@ def _capture_with_fallback(transcript, meta, primary, fallback) -> list[dict]:
         return fallback.capture(transcript, meta)
 
 def run_loop(db_path, primary, fallback, interval: float = 5.0, stop=None,
-             capture_mode: str | None = None) -> None:
+             capture_mode: str | None = None, ollama=None) -> None:
     """Poll the queue until stop() is truthy. A bad tick is logged, never fatal."""
     while not (stop and stop()):
         conn = db_mod.connect(db_path)
         try:
-            process_pending(conn, primary, fallback, capture_mode=capture_mode)
+            process_pending(conn, primary, fallback, capture_mode=capture_mode, ollama=ollama)
         except Exception:
             logger.exception("memhub worker tick failed")
         finally:

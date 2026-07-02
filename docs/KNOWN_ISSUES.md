@@ -2,7 +2,13 @@
 
 ## Issue 1 — LLM extraction (`claude -p`) has no usable auth under the launchd service
 
-**Severity:** High (the headline structured-extraction feature is degraded) · **Status:** mitigated · **Found:** 2026-06-22 · **Mitigated:** 2026-06-22
+**Severity:** High (the headline structured-extraction feature is degraded) · **Status:** resolved (via `ollama` mode) · **Found:** 2026-06-22 · **Mitigated:** 2026-06-22 · **Resolved:** 2026-07-02
+
+**Resolution (2026-07-02):** candidate fix 1 shipped — capture mode `ollama` runs structured
+extraction through a local Ollama daemon (default `qwen2.5:3b-instruct`, override with
+`MEMHUB_OLLAMA_MODEL`). No claude auth is involved anywhere on that path, so the launchd
+environment gap is irrelevant. `llm` mode remains available for machines where headless
+`claude -p` auth actually works.
 
 **Symptom:** The background worker's `claude -p` call times out after 120s when running under the launchd service. Every capture then falls back to `RawCapturer`, so memories are stored as raw text chunks instead of structured `decision` / `fact` / `convention` / `snippet` items.
 
@@ -22,7 +28,11 @@
 
 ## Issue 2 — `claude -p` extraction calls get recorded as their own sessions (self-pollution)
 
-**Severity:** Medium · **Status:** mitigated · **Found:** 2026-06-22 · **Mitigated:** 2026-06-22
+**Severity:** Medium · **Status:** resolved for `ollama` mode / mitigated for `llm` mode · **Found:** 2026-06-22 · **Mitigated:** 2026-06-22
+
+**Resolution (2026-07-02):** the `ollama` capture mode never invokes `claude -p`, so no
+session is recorded and the feedback loop cannot occur on that path. The
+`MEMHUB_EXTRACTING` env guard and the prompt-marker skip stay in place for `llm` mode.
 
 **Symptom:** A captured memory's content turned out to be memhub's own extraction prompt (`You extract durable memories from an AI coding session transcript...`). The worker's `claude -p` invocation is itself logged by the claude CLI as a session under `~/.claude/projects/-Users-jiumu-Code-memhub/`, which the SessionEnd hook can then capture — a feedback loop.
 
@@ -36,4 +46,6 @@
 
 ---
 
-**Note on current state:** memhub still functions in degraded mode — it captures raw conversation chunks, which are embedded, searchable (hybrid vector + FTS), and manageable via the web viewer / CLI. The structured-extraction layer is what's currently inert. See [DESIGN.md](DESIGN.md) for the intended pipeline.
+**Note on current state:** with capture mode `ollama` the structured-extraction layer is
+fully functional and offline. `raw` mode remains the zero-dependency default for machines
+without Ollama. See [DESIGN.md](DESIGN.md) for the pipeline.

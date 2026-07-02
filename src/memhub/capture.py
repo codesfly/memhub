@@ -5,6 +5,7 @@ Each item: {"content": str, "kind": str, "tags": list, "scope": str}
 import json
 import os
 import subprocess
+import urllib.request
 from typing import Protocol
 
 from . import config
@@ -64,7 +65,7 @@ def _extract_json_array(text: str) -> list[dict]:
     # tolerate ```json fences or surrounding prose: grab first [ ... last ]
     start, end = text.find("["), text.rfind("]")
     if start == -1 or end == -1 or end < start:
-        raise CaptureError(f"no JSON array in claude output: {text[:120]!r}")
+        raise CaptureError(f"no JSON array in extractor output: {text[:120]!r}")
     try:
         data = json.loads(text[start:end + 1])
     except json.JSONDecodeError as e:
@@ -72,6 +73,77 @@ def _extract_json_array(text: str) -> list[dict]:
     if not isinstance(data, list):
         raise CaptureError("parsed JSON is not a list")
     return data
+
+
+def _normalize_items(items: list) -> list[dict]:
+    """Coerce extractor output into well-formed memory dicts; drop invalid entries."""
+    out = []
+    for it in items:
+        if isinstance(it, dict) and it.get("content"):
+            out.append({
+                "content": str(it["content"]),
+                # default 'fact' (LLM items); RawCapturer/schema default is 'raw'.
+                "kind": it.get("kind", "fact"),
+                "tags": it.get("tags", []) if isinstance(it.get("tags"), list) else [],
+                "scope": "global" if it.get("scope") == "global" else "current",
+            })
+    return out
+
+
+# structured-output schema for extractors that accept one (Ollama `format`);
+# mirrors _EXTRACT_PROMPT so the model cannot return prose or a bare object
+_EXTRACT_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string"},
+            "kind": {"type": "string", "enum": ["decision", "fact", "convention", "snippet"]},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "scope": {"type": "string", "enum": ["current", "global"]},
+        },
+        "required": ["content", "kind", "tags", "scope"],
+    },
+}
+
+
+class OllamaCapturer:
+    """Primary: structured extraction via a local Ollama model.
+
+    No cloud auth (works under launchd where `claude -p` has none) and no claude
+    session recording (the self-capture feedback loop cannot occur on this path).
+    """
+
+    def __init__(self, url: str = config.OLLAMA_URL, model: str = config.OLLAMA_MODEL,
+                 timeout: int = 120, max_chars: int = config.EXTRACT_MAX_CHARS):
+        self.url = url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.max_chars = max_chars
+
+    def capture(self, transcript: str, meta: dict) -> list[dict]:
+        text = transcript.strip()
+        if not text:
+            raise CaptureError("empty transcript")
+        text = text[-self.max_chars:]  # tail fits the model context; endings hold the conclusions
+        body = json.dumps({
+            "model": self.model,
+            "prompt": f"{_EXTRACT_PROMPT}\n\nTranscript:\n{text}",
+            "stream": False,
+            "format": _EXTRACT_SCHEMA,
+            "options": {"num_ctx": 16384, "temperature": 0},
+        }).encode()
+        req = urllib.request.Request(self.url + "/api/generate", data=body,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = json.loads(r.read())
+        except (OSError, ValueError) as e:  # URLError/timeout are OSError; bad JSON is ValueError
+            raise CaptureError(f"ollama request failed: {e}") from e
+        out = _normalize_items(_extract_json_array(data.get("response", "")))
+        if not out:
+            raise CaptureError("no valid memory items extracted")
+        return out
 
 
 class LLMCapturer:
@@ -93,17 +165,7 @@ class LLMCapturer:
         )
         if proc.returncode != 0:
             raise CaptureError(f"claude exited {proc.returncode}: {proc.stderr[:200]}")
-        items = _extract_json_array(proc.stdout)
-        out = []
-        for it in items:
-            if isinstance(it, dict) and it.get("content"):
-                out.append({
-                    "content": str(it["content"]),
-                    # default 'fact' (LLM items); RawCapturer/schema default is 'raw'.
-                    "kind": it.get("kind", "fact"),
-                    "tags": it.get("tags", []) if isinstance(it.get("tags"), list) else [],
-                    "scope": "global" if it.get("scope") == "global" else "current",
-                })
+        out = _normalize_items(_extract_json_array(proc.stdout))
         if not out:
             raise CaptureError("no valid memory items extracted")
         return out

@@ -24,8 +24,14 @@ RAW_MAX_CHUNKS = 40
 # recency injection returns at most this many memories from the same session, so one
 # giant raw-captured session can't fill every slot.
 INJECT_SESSION_CAP = 2
-VALID_CAPTURE_MODES = ("off", "raw", "llm")
+VALID_CAPTURE_MODES = ("off", "raw", "llm", "ollama")
 CAPTURE_MODE = os.environ.get("MEMHUB_CAPTURE_MODE", "raw").lower()
+# offline structured extraction via a local Ollama daemon: no cloud auth (fixes the
+# launchd claude -p auth gap) and no claude session recording (no self-capture loop)
+OLLAMA_URL = os.environ.get("MEMHUB_OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.environ.get("MEMHUB_OLLAMA_MODEL", "qwen2.5:3b-instruct")
+# transcript tail sent to the local extractor; bounded so it fits a small model's context
+EXTRACT_MAX_CHARS = 16000
 INJECT_ENABLED = os.environ.get("MEMHUB_INJECT_ENABLED", "0").lower() in ("1", "true", "yes", "on")
 # Zero-LLM sync of Claude's curated memory/*.md files into memhub.
 MEMORY_PROJECTS_ROOT = Path(os.environ.get("MEMHUB_MEMORY_ROOT", str(Path.home() / ".claude" / "projects")))

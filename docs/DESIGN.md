@@ -24,8 +24,9 @@ memhub 是一个**本地优先的共享记忆中枢**,让多个 CLI AI agent(Cla
 │   ├─ MCP (streamable HTTP)  → search / store_note,给 agent 连   │
 │   └─ REST  → POST /capture · GET /search · GET /health         │
 │  捕获器 (可插拔 Capturer 接口)                                   │
-│   ├─ LLMCapturer   claude -p 抽取结构化记忆  (主)               │
-│   └─ RawCapturer   原文切片                   (兜底)            │
+│   ├─ OllamaCapturer 本地 Ollama 结构化抽取    (离线主选)         │
+│   ├─ LLMCapturer   claude -p 抽取结构化记忆  (需 headless 认证) │
+│   └─ RawCapturer   原文切片                   (默认 / 兜底)      │
 │  处理:  脱敏 → embedding (fastembed 多语言 MiniLM-L12 / 384)    │
 │  存储:  SQLite + sqlite-vec(向量) + FTS5(关键词)               │
 │  检索:  向量 + 关键词 RRF 混合排序                              │
@@ -129,7 +130,7 @@ hook 走 REST(`curl` 最省事),MCP 留给 agent 在会话里智能调用。
 |---|---|
 | **Phase 1 (MVP)** | memhub 服务(存储 / 检索 / 队列 / REST + MCP)→ RawCapturer 先跑通管道 → 接 LLMCapturer → **Claude Code hook(SessionEnd 捕获 + SessionStart 注入)** → launchd 常驻 |
 | **Phase 2** | Codex CLI hook + Gemini CLI hook(服务零改动) |
-| **Phase 3 (可选)** | Ollama 离线 capturer、记忆管理 CLI、衰减 / 合并 consolidation |
+| **Phase 3 (可选)** | Ollama 离线 capturer ✅(2026-07)、记忆管理 CLI ✅、衰减 / 合并 consolidation(未做) |
 
 ## 13. 关键决策记录
 
@@ -137,7 +138,7 @@ hook 走 REST(`curl` 最省事),MCP 留给 agent 在会话里智能调用。
 |---|---|
 | 语言 / 栈 | Python · FastMCP · fastembed(paraphrase-multilingual-MiniLM-L12-v2/384) · sqlite-vec · 项目 venv |
 | 部署 | launchd 宿主常驻,直接调 claude CLI(不用 Docker——claude 订阅认证绑宿主 Keychain,容器进不去) |
-| 捕获 | `claude -p` 抽取(主)+ 原文兜底,可插拔 Capturer 接口 |
+| 捕获 | 可插拔 Capturer 接口:`ollama` 本地抽取(离线主选,launchd 下无认证问题)/ `claude -p` 抽取 / 原文兜底 |
 | 隔离 | 全局一池 + project/agent/tag,默认 current+global,可 all |
 | 注入 | SessionStart 自动 top-6 + MCP `search` 主动 |
 | embedding | paraphrase-multilingual-MiniLM-L12-v2 / 384 维(实测记忆库 71% 内容为中文,英文模型两条检索腿全瘸;同 384 维保 schema 不变,`memhub reindex` 迁移存量;向量统一 L2 归一化,KNN 的 L2 序 ≡ 余弦序) |

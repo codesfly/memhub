@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch, MagicMock
 
-from memhub.capture import LLMCapturer, RawCapturer
+from memhub.capture import LLMCapturer, OllamaCapturer, RawCapturer
 
 
 def test_raw_capturer_returns_chunks():
@@ -110,3 +110,65 @@ def test_llm_capturer_marks_subprocess_to_break_self_capture_loop():
     assert env is not None, "extraction must pass an env so the hook can skip it"
     assert env.get("MEMHUB_EXTRACTING") == "1"
     assert "PATH" in env, "must inherit os.environ, not replace it"
+
+
+def _ollama_resp(response_text):
+    """Mock urlopen context manager for a non-streaming /api/generate reply."""
+    m = MagicMock()
+    m.read.return_value = json.dumps({"response": response_text}).encode()
+    m.__enter__ = lambda s: m
+    m.__exit__ = lambda *a: False
+    return m
+
+
+def test_ollama_capturer_parses_items_and_calls_local_api():
+    out = json.dumps([{"content": "决定用 launchd 定时推送记忆", "kind": "decision",
+                       "tags": ["deploy"], "scope": "current"}])
+    with patch("memhub.capture.urllib.request.urlopen", return_value=_ollama_resp(out)) as u:
+        items = OllamaCapturer().capture("user: 我们用 launchd 定时推送\nassistant: 好，已配置", {})
+    assert items[0]["kind"] == "decision"
+    assert items[0]["content"] == "决定用 launchd 定时推送记忆"
+    req = u.call_args.args[0]
+    assert req.full_url.endswith("/api/generate")
+    body = json.loads(req.data)
+    assert body["stream"] is False
+    assert body["format"]["type"] == "array"     # structured output schema, not free text
+    assert "transcript" in body["prompt"].lower() or "user:" in body["prompt"]
+
+
+def test_ollama_capturer_raises_on_connection_error():
+    import urllib.error
+    with patch("memhub.capture.urllib.request.urlopen",
+               side_effect=urllib.error.URLError("connection refused")):
+        try:
+            OllamaCapturer().capture("some transcript", {})
+            assert False, "expected CaptureError"
+        except Exception as e:
+            assert "ollama" in str(e).lower()
+
+
+def test_ollama_capturer_rejects_empty_without_http():
+    with patch("memhub.capture.urllib.request.urlopen") as u:
+        raised = False
+        try:
+            OllamaCapturer().capture("   ", {})
+        except Exception:
+            raised = True
+        assert raised
+        u.assert_not_called()
+
+
+def test_ollama_capturer_sends_transcript_tail_only():
+    out = json.dumps([{"content": "x", "kind": "fact", "tags": [], "scope": "current"}])
+    with patch("memhub.capture.urllib.request.urlopen", return_value=_ollama_resp(out)) as u:
+        OllamaCapturer(max_chars=100).capture("HEAD-MARKER " + "x" * 500 + " TAIL-MARKER", {})
+    body = json.loads(u.call_args.args[0].data)
+    assert "TAIL-MARKER" in body["prompt"]
+    assert "HEAD-MARKER" not in body["prompt"]  # local model context is finite; endings hold conclusions
+
+
+def test_ollama_capturer_normalizes_partial_items():
+    out = json.dumps([{"content": "只有内容"}, {"no_content": True}, "not a dict"])
+    with patch("memhub.capture.urllib.request.urlopen", return_value=_ollama_resp(out)):
+        items = OllamaCapturer().capture("t", {})
+    assert items == [{"content": "只有内容", "kind": "fact", "tags": [], "scope": "current"}]

@@ -39,6 +39,7 @@ PAGE = """<!doctype html>
    <option value="off">关闭捕获</option>
    <option value="raw">原文捕获</option>
    <option value="llm">LLM 抽取</option>
+   <option value="ollama">Ollama 抽取</option>
   </select>
   <label class="toggle" title="会话开始时注入记忆"><input id="inject-enabled" type="checkbox">注入</label>
   <button id="clear-pending" title="清空待处理的捕获">清空待处理</button>
@@ -51,7 +52,7 @@ const el = id => document.getElementById(id);
 const esc = s => (s||"").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 function status(msg){ el('settings-status').textContent = msg || ''; }
 function settingsLabel(data){
- const mode = data.capture_mode === 'llm' ? 'LLM' : data.capture_mode === 'off' ? '关闭' : '原文';
+ const mode = ({llm:'LLM', ollama:'Ollama', off:'关闭'})[data.capture_mode] || '原文';
  return `${mode} · 注入${data.inject_enabled ? '开' : '关'}`;
 }
 async function loadProjects(){

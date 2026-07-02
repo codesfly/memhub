@@ -12,14 +12,14 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
 
 ## 特性
 
-- **可控捕获** —— SessionEnd 默认只做 raw 原文切片,也可以完全关闭;只有显式切到 `llm` 才会调用 LLM 抽取器(`claude -p`)。
+- **可控捕获** —— SessionEnd 默认只做 raw 原文切片,也可以完全关闭;显式切换后才做结构化抽取:`ollama` 模式走本地 Ollama(纯离线),`llm` 模式走 `claude -p`。
 - **可选注入** —— SessionStart 注入默认关闭,可在 Web UI 或 settings API 里打开。
 - **混合检索** —— 向量(sqlite-vec)+ 关键词(FTS5),用 RRF(Reciprocal Rank Fusion)融合,按 scope 过滤。
 - **本地优先、默认零 key** —— SQLite + 本地 `fastembed`(paraphrase-multilingual-MiniLM-L12-v2,支持中文等 50+ 语言,384 维)。除非显式开启 LLM 抽取,否则无云、无第三方 API key;LLM 抽取会复用你现有的 `claude` CLI 认证。
 - **写前脱敏** —— API key / token / 密码在入库前被抹掉。
 - **多 agent 就绪** —— 中立的 REST + MCP 接口,任何 agent 都能读写同一个池;记忆带 `project` / `agent` / `scope` 标签,不绑定所有者。
 - **韧性** —— 服务是"增强"不是"依赖":它挂了,hook 静默跳过、绝不阻断你的 agent;单条捕获失败被隔离,worker 不会被拖死。
-- **可插拔捕获** —— LLM 抽取器只是 `Capturer` 接口的一个实现;离线的 Ollama 抽取器可以无缝替换,不动管道。
+- **可插拔捕获** —— 抽取器都实现同一个 `Capturer` 接口;离线 Ollama 抽取器和 `claude -p` 抽取器是其中两个实现,失败都降级 raw。
 
 ## 架构
 
@@ -45,7 +45,8 @@ memhub 给你的 CLI 编程 agent 一份共享、持久的记忆:会话结束时
 
 - macOS(服务基于 launchd;Linux 用 systemd unit 也行,但脚本未写)
 - Python 3.12+
-- `claude` CLI 在 `PATH` 上(用于 LLM 抽取,复用你 Claude Code 已有的认证)
+- 可选,`ollama` 捕获模式:[Ollama](https://ollama.com) + 一个小 instruct 模型 —— `brew install ollama && brew services start ollama && ollama pull qwen2.5:3b-instruct`(可用 `MEMHUB_OLLAMA_MODEL` / `MEMHUB_OLLAMA_URL` 覆盖)
+- 可选,`llm` 捕获模式:`claude` CLI 在 `PATH` 上且 headless 认证可用(见 docs/KNOWN_ISSUES.md —— launchd 下通常没有,这正是 `ollama` 模式要解决的)
 
 ## 安装
 
@@ -92,7 +93,7 @@ deploy/memory-sync.sh unschedule       # 关闭定时
 
 ## 工作原理
 
-- **捕获** —— 会话结束 → hook POST `transcript_path` → 服务检查捕获模式。`off` 跳过,`raw` 存原文切片,`llm` 才调用 `claude -p` 抽结构化记忆并在失败时回退 raw。hook 立即返回。
+- **捕获** —— 会话结束 → hook POST `transcript_path` → 服务检查捕获模式。`off` 跳过,`raw` 存原文切片,`ollama` 走本地 Ollama 模型抽结构化记忆,`llm` 走 `claude -p`;两种抽取失败都回退 raw。hook 立即返回。
 - **注入** —— 会话开始 → hook 向 `/inject` 要当前 `cwd` 的相关记忆;只有注入开关打开时才会返回 `additionalContext`。
 - **检索** —— 会话中 agent 调 `search_memories` MCP 工具按需召回。
 
@@ -147,7 +148,8 @@ launchctl load   ~/Library/LaunchAgents/com.memhub.server.plist
 
 - [x] **Phase 1** —— 服务核心 + 异步捕获管道 + Claude Code 集成(hooks + launchd)
 - [ ] **Phase 2** —— Gemini CLI / Codex hook(服务不变——中立 REST/MCP)
-- [ ] **Phase 3** —— Ollama 离线抽取器、记忆管理 CLI、衰减 / 合并
+- [x] **Phase 3a** —— Ollama 离线抽取器(`ollama` 捕获模式,零云端认证)
+- [ ] **Phase 3b** —— 衰减 / 合并 consolidation
 
 ## 卸载
 
