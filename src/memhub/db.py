@@ -15,6 +15,10 @@ def connect(path: Path | str = config.DB_PATH) -> sqlite3.Connection:
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     conn.execute("PRAGMA journal_mode=WAL")
+    # three writer threads share this db (server / worker / memsync): wait out a held
+    # write lock instead of raising "database is locked" immediately
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")  # the standard WAL pairing; FULL only guards vs OS crash
     return conn
 
 
